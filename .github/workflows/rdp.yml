@@ -1,4 +1,4 @@
-name: Cloud Browser + VLC Media Stream
+name: Cloud Browser + VLC Media Stream (Public Safe)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,10 @@ jobs:
           mkdir -p /home/runner/Downloads
           chmod 777 /home/runner/Downloads
 
-      - name: Run Kasm Chromium (WebRTC)
+      - name: Run Kasm Chromium (WebRTC Secure)
+        env:
+          CUSTOM_USER: ${{ secrets.BROWSER_USER }}
+          PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
           docker run -d \
             --name=kasm-chromium \
@@ -26,26 +29,26 @@ jobs:
             -v /home/runner/Downloads:/config/Downloads \
             -e PUID=1000 \
             -e PGID=1000 \
-            -e CUSTOM_USER=admin \
-            -e PASSWORD=admin \
+            -e CUSTOM_USER="$CUSTOM_USER" \
+            -e PASSWORD="$PASSWORD" \
             lscr.io/linuxserver/chromium:latest
 
       - name: Start VLC Stream Server & Dual Tunnels
         run: |
-          # 1. تشغيل خادم الميديا لمجلد التنزيلات على منفذ 8080
+          # 1. تشغيل سيرفر الملفات للبث المباشر
           cd /home/runner/Downloads
           python3 -m http.server 8080 &
 
-          # 2. تشغيل نفق المتصفح (منفذ 3000)
+          # 2. تشغيل نفق المتصفح
           cloudflared tunnel --url http://localhost:3000 --logfile browser_tunnel.log &
 
-          # 3. تشغيل نفق بث VLC (منفذ 8080)
+          # 3. تشغيل نفق VLC
           cloudflared tunnel --url http://localhost:8080 --logfile vlc_tunnel.log &
 
           sleep 7
 
           echo "================================================="
-          echo "1. Cloud Browser Link (admin / admin):"
+          echo "1. Cloud Browser Link:"
           grep -o 'https://.*\.trycloudflare.com' browser_tunnel.log | head -n 1
           echo ""
           echo "2. VLC Streaming Directory Link:"
