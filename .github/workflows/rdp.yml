@@ -23,13 +23,16 @@ jobs:
         run: |
           echo "runner:${{ github.event.inputs.rdp_password }}" | sudo chpasswd
 
-      - name: Start TCP Tunnel
+      - name: Start TCP Tunnel (Bore)
         run: |
-          ssh -p 443 -R0:localhost:3389 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -N a.pinggy.io > pinggy.log 2>&1 &
-          sleep 12
-          cat pinggy.log
+          wget -qO- https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar -xz
+          ./bore local 3389 --to bore.pub > bore.log 2>&1 &
+          sleep 5
           echo "================================================="
+          echo "Connect Details for RD Client Android:"
+          echo "PC Name: $(grep -o 'bore.pub:[0-9]*' bore.log | head -n 1)"
           echo "Username: runner"
           echo "Password: ${{ github.event.inputs.rdp_password }}"
           echo "================================================="
+          cat bore.log
           sleep 21600
