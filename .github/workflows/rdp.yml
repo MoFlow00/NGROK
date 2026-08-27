@@ -1,60 +1,37 @@
-name: Cached Fast Ubuntu Web RDP
+name: Super Smooth Cloud Browser (Kasm WebRTC)
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
     steps:
-      - name: Cache APT Packages
-        id: apt-cache
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: ${{ runner.os }}-xfce-vnc-chromium-v1
-
-      - name: Install Desktop, VNC, noVNC & Chromium
-        run: |
-          sudo apt update
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y \
-            xfce4 \
-            xfce4-goodies \
-            tightvncserver \
-            novnc \
-            websockify \
-            chromium-browser
-          echo xfce4-session > ~/.xsession
-
-      - name: Start VNC Server & noVNC Proxy
-        run: |
-          mkdir -p ~/.vnc
-          echo "123456" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          vncserver :1 -geometry 1280x720 -depth 24
-          websockify -D --web=/usr/share/novnc/ 6080 localhost:5901
-
-      - name: Cache Cloudflared Binary
-        id: cloudflared-cache
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/cloudflared
-          key: ${{ runner.os }}-cloudflared-bin-v1
-
       - name: Install Cloudflared
-        if: steps.cloudflared-cache.outputs.cache-hit != 'true'
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
-          sudo cp /usr/bin/cloudflared /usr/local/bin/cloudflared || true
 
-      - name: Launch Tunnel and Output Link
+      - name: Run Kasm Chromium (WebRTC 60FPS)
         run: |
-          cloudflared tunnel --url http://localhost:6080 --logfile cloudflared.log &
-          sleep 7
+          docker run -d \
+            --name=kasm-chromium \
+            -p 3000:3000 \
+            -e PUID=1000 \
+            -e PGID=1000 \
+            -e TZ=Etc/UTC \
+            -e CUSTOM_USER=admin \
+            -e PASSWORD=admin \
+            lscr.io/linuxserver/chromium:latest
+
+      - name: Launch Tunnel
+        run: |
+          cloudflared tunnel --url http://localhost:3000 --logfile cloudflared.log &
+          sleep 6
           echo "================================================="
-          echo "Direct Web Link:"
-          echo "$(grep -o 'https://.*\.trycloudflare.com' cloudflared.log | head -n 1)/vnc.html?autoconnect=true&reconnect=true&reconnect_delay=1000"
-          echo "Password: 123456"
+          echo "Your Smooth Cloud Browser Link:"
+          grep -o 'https://.*\.trycloudflare.com' cloudflared.log | head -n 1
+          echo "Username: admin"
+          echo "Password: admin"
           echo "================================================="
           sleep 21600
