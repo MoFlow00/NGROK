@@ -1,4 +1,4 @@
-name: Ubuntu Native RDP (For Windows App)
+name: Android RD Client Ubuntu
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install XFCE & XRDP
+      - name: Install Desktop & XRDP
         run: |
           sudo apt update
           sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies xrdp
@@ -23,17 +23,14 @@ jobs:
         run: |
           echo "runner:${{ github.event.inputs.rdp_password }}" | sudo chpasswd
 
-      - name: Install Cloudflared
-        run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-
       - name: Start TCP Tunnel
         run: |
-          cloudflared tunnel --url tcp://localhost:3389 --logfile tunnel.log &
-          sleep 7
+          ssh -p 443 -R0:localhost:3389 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 a.pinggy.io > pinggy.log 2>&1 &
+          sleep 8
           echo "================================================="
-          echo "Cloudflare Tunnel Host:"
-          grep -o 'https://.*\.trycloudflare.com' tunnel.log | sed 's|https://||' | head -n 1
+          echo "Connect Details for RD Client Android:"
+          grep -o '[a-z0-9]*\.a\.pinggy\.io:[0-9]*' pinggy.log | head -n 1
+          echo "Username: runner"
+          echo "Password: ${{ github.event.inputs.rdp_password }}"
           echo "================================================="
           sleep 21600
