@@ -1,0 +1,43 @@
+name: Ubuntu Desktop RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      rdp_password:
+        description: 'Set RDP user password'
+        required: true
+        default: 'P@ssword1234'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Desktop Environment & XRDP
+        run: |
+          sudo apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies xrdp
+          echo xfce4-session > ~/.xsession
+          sudo systemctl restart xrdp
+
+      - name: Setup User Password
+        run: |
+          echo "runner:${{ github.event.inputs.rdp_password }}" | sudo chpasswd
+
+      - name: Download and Setup ngrok
+        run: |
+          wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+          tar -xzf ngrok-v3-stable-linux-amd64.tgz
+          ./ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+
+      - name: Start ngrok TCP Tunnel and Keep Alive
+        run: |
+          ./ngrok tcp 3389 --log=stdout &
+          sleep 5
+          curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+          echo "================================================="
+          echo "Use the above URL in your RDP client."
+          echo "Username: runner"
+          echo "Password: ${{ github.event.inputs.rdp_password }}"
+          echo "================================================="
+          # إبقاء الـ Runner يعمل لأطول فترة ممكنة (حتى 6 ساعات)
+          sleep 21600
