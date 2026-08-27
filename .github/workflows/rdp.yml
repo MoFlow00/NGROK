@@ -1,38 +1,60 @@
-name: Android RD Client Ubuntu
+name: Cached Fast Ubuntu Web RDP
 
 on:
   workflow_dispatch:
-    inputs:
-      rdp_password:
-        description: 'Set RDP user password'
-        required: true
-        default: 'P@ssword1234'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Desktop & XRDP
+      - name: Cache APT Packages
+        id: apt-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-xfce-vnc-chromium-v1
+
+      - name: Install Desktop, VNC, noVNC & Chromium
         run: |
           sudo apt update
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies xrdp
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y \
+            xfce4 \
+            xfce4-goodies \
+            tightvncserver \
+            novnc \
+            websockify \
+            chromium-browser
           echo xfce4-session > ~/.xsession
-          sudo systemctl restart xrdp
 
-      - name: Set Password
+      - name: Start VNC Server & noVNC Proxy
         run: |
-          echo "runner:${{ github.event.inputs.rdp_password }}" | sudo chpasswd
+          mkdir -p ~/.vnc
+          echo "123456" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          vncserver :1 -geometry 1280x720 -depth 24
+          websockify -D --web=/usr/share/novnc/ 6080 localhost:5901
 
-      - name: Start TCP Tunnel (Bore)
+      - name: Cache Cloudflared Binary
+        id: cloudflared-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/cloudflared
+          key: ${{ runner.os }}-cloudflared-bin-v1
+
+      - name: Install Cloudflared
+        if: steps.cloudflared-cache.outputs.cache-hit != 'true'
         run: |
-          wget -qO- https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz | tar -xz
-          ./bore local 3389 --to bore.pub > bore.log 2>&1 &
-          sleep 5
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          sudo cp /usr/bin/cloudflared /usr/local/bin/cloudflared || true
+
+      - name: Launch Tunnel and Output Link
+        run: |
+          cloudflared tunnel --url http://localhost:6080 --logfile cloudflared.log &
+          sleep 7
           echo "================================================="
-          echo "Connect Details for RD Client Android:"
-          echo "PC Name: $(grep -o 'bore.pub:[0-9]*' bore.log | head -n 1)"
-          echo "Username: runner"
-          echo "Password: ${{ github.event.inputs.rdp_password }}"
+          echo "Direct Web Link:"
+          echo "$(grep -o 'https://.*\.trycloudflare.com' cloudflared.log | head -n 1)/vnc.html?autoconnect=true&reconnect=true&reconnect_delay=1000"
+          echo "Password: 123456"
           echo "================================================="
-          cat bore.log
           sleep 21600
