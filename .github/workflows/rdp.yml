@@ -1,39 +1,39 @@
-name: Free Ubuntu Web RDP
+name: Ubuntu Native RDP (For Windows App)
 
 on:
   workflow_dispatch:
+    inputs:
+      rdp_password:
+        description: 'Set RDP user password'
+        required: true
+        default: 'P@ssword1234'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Desktop, VNC and noVNC
+      - name: Install XFCE & XRDP
         run: |
           sudo apt update
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies tightvncserver novnc websockify
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies xrdp
+          echo xfce4-session > ~/.xsession
+          sudo systemctl restart xrdp
 
-      - name: Start VNC Server
+      - name: Set Password
         run: |
-          mkdir -p ~/.vnc
-          echo "123456" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          # تشغيل الشاشة الوهمية والواجهة
-          vncserver :1 -geometry 1280x720 -depth 24
-          # تشغيل محول الويب noVNC
-          websockify -D --web=/usr/share/novnc/ 6080 localhost:5901
+          echo "runner:${{ github.event.inputs.rdp_password }}" | sudo chpasswd
 
-      - name: Install Cloudflare Tunnel
+      - name: Install Cloudflared
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Tunnel and Output Link
+      - name: Start TCP Tunnel
         run: |
-          cloudflared tunnel --url http://localhost:6080 --logfile cloudflared.log &
+          cloudflared tunnel --url tcp://localhost:3389 --logfile tunnel.log &
           sleep 7
           echo "================================================="
-          echo "Open this Link in your Browser:"
-          grep -o 'https://.*\.trycloudflare.com' cloudflared.log | head -n 1
-          echo "Password is: 123456"
+          echo "Cloudflare Tunnel Host:"
+          grep -o 'https://.*\.trycloudflare.com' tunnel.log | sed 's|https://||' | head -n 1
           echo "================================================="
           sleep 21600
