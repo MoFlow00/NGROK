@@ -25,11 +25,10 @@ jobs:
 
       - name: Start TCP Tunnel
         run: |
-          ssh -p 443 -R0:localhost:3389 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 a.pinggy.io > pinggy.log 2>&1 &
-          sleep 8
+          ssh -p 443 -R0:localhost:3389 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -N a.pinggy.io > pinggy.log 2>&1 &
+          sleep 12
+          cat pinggy.log
           echo "================================================="
-          echo "Connect Details for RD Client Android:"
-          grep -o '[a-z0-9]*\.a\.pinggy\.io:[0-9]*' pinggy.log | head -n 1
           echo "Username: runner"
           echo "Password: ${{ github.event.inputs.rdp_password }}"
           echo "================================================="
