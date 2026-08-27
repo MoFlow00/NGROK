@@ -1,4 +1,4 @@
-name: Super Smooth Cloud Browser (Kasm WebRTC)
+name: Cloud Browser + VLC Media Stream
 
 on:
   workflow_dispatch:
@@ -7,31 +7,48 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Cloudflared
+      - name: Install Tools & Cloudflared
         run: |
+          sudo apt update && sudo apt install -y python3
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Run Kasm Chromium (WebRTC 60FPS)
+      - name: Create Shared Downloads Directory
+        run: |
+          mkdir -p /home/runner/Downloads
+          chmod 777 /home/runner/Downloads
+
+      - name: Run Kasm Chromium (WebRTC)
         run: |
           docker run -d \
             --name=kasm-chromium \
             -p 3000:3000 \
+            -v /home/runner/Downloads:/config/Downloads \
             -e PUID=1000 \
             -e PGID=1000 \
-            -e TZ=Etc/UTC \
             -e CUSTOM_USER=admin \
             -e PASSWORD=admin \
             lscr.io/linuxserver/chromium:latest
 
-      - name: Launch Tunnel
+      - name: Start VLC Stream Server & Dual Tunnels
         run: |
-          cloudflared tunnel --url http://localhost:3000 --logfile cloudflared.log &
-          sleep 6
+          # 1. تشغيل خادم الميديا لمجلد التنزيلات على منفذ 8080
+          cd /home/runner/Downloads
+          python3 -m http.server 8080 &
+
+          # 2. تشغيل نفق المتصفح (منفذ 3000)
+          cloudflared tunnel --url http://localhost:3000 --logfile browser_tunnel.log &
+
+          # 3. تشغيل نفق بث VLC (منفذ 8080)
+          cloudflared tunnel --url http://localhost:8080 --logfile vlc_tunnel.log &
+
+          sleep 7
+
           echo "================================================="
-          echo "Your Smooth Cloud Browser Link:"
-          grep -o 'https://.*\.trycloudflare.com' cloudflared.log | head -n 1
-          echo "Username: admin"
-          echo "Password: admin"
+          echo "1. Cloud Browser Link (admin / admin):"
+          grep -o 'https://.*\.trycloudflare.com' browser_tunnel.log | head -n 1
+          echo ""
+          echo "2. VLC Streaming Directory Link:"
+          grep -o 'https://.*\.trycloudflare.com' vlc_tunnel.log | head -n 1
           echo "================================================="
           sleep 21600
