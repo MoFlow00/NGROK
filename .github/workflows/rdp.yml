@@ -1,4 +1,4 @@
-name: Ubuntu Desktop RDP
+name: Free Ubuntu RDP (No Card)
 
 on:
   workflow_dispatch:
@@ -12,10 +12,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Desktop Environment & XRDP
+      - name: Install Desktop & XRDP
         run: |
           sudo apt update
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies xrdp
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y xfce4 xfce4-goodies xrdp websockify
           echo xfce4-session > ~/.xsession
           sudo systemctl restart xrdp
 
@@ -23,21 +23,25 @@ jobs:
         run: |
           echo "runner:${{ github.event.inputs.rdp_password }}" | sudo chpasswd
 
-      - name: Download and Setup ngrok
+      - name: Install Cloudflare Tunnel
         run: |
-          wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-          tar -xzf ngrok-v3-stable-linux-amd64.tgz
-          ./ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Start ngrok TCP Tunnel and Keep Alive
+      - name: Start Web RDP & Cloudflare Tunnel
         run: |
-          ./ngrok tcp 3389 --log=stdout &
-          sleep 5
-          curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+          # تشغيل Web RDP للوصول مباشرة من المتصفح بدون برامج خارجية
+          git clone https://github.com/novnc/noVNC.git /tmp/novnc
+          git clone https://github.com/novnc/websockify /tmp/novnc/utils/websockify
+          sudo apt install -y x11vnc
+          x11vnc -display :0 -autoport -localhost -nopw -bg -forever &
+          /tmp/novnc/utils/novnc_proxy --vnc localhost:5900 --listen 6080 &
+          
+          # فتح النفق المجاني عبر Cloudflare
+          cloudflared tunnel --url http://localhost:6080 --logfile cloudflared.log &
+          sleep 6
           echo "================================================="
-          echo "Use the above URL in your RDP client."
-          echo "Username: runner"
-          echo "Password: ${{ github.event.inputs.rdp_password }}"
+          echo "Your Web RDP Link:"
+          grep -o 'https://.*\.trycloudflare.com' cloudflared.log | head -n 1
           echo "================================================="
-          # إبقاء الـ Runner يعمل لأطول فترة ممكنة (حتى 6 ساعات)
           sleep 21600
