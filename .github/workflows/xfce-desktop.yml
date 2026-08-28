@@ -22,7 +22,6 @@ jobs:
           CUSTOM_USER: ${{ secrets.BROWSER_USER }}
           PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          # تشغيل سطح مكتب XFCE كامل مع متصفح عبر Kasm WebRTC بأعلى سرعة وأقل تأخير
           docker run -d \
             --name=xfce-desktop \
             --privileged \
@@ -39,8 +38,12 @@ jobs:
           cloudflared tunnel --url http://localhost:3000 --logfile desktop_tunnel.log &
           sleep 10
 
+          DESKTOP_URL=$(grep -o 'https://.*\.trycloudflare\.com' desktop_tunnel.log | head -n 1)
+
+          # إرسال الرابط للداشبورد مباشرة
+          echo "::notice title=DESKTOP_URL::$DESKTOP_URL"
+
           echo "================================================="
-          echo "DESKTOP_URL:"
-          grep -o 'https://.*\.trycloudflare.com' desktop_tunnel.log | head -n 1
+          echo "DESKTOP_URL: $DESKTOP_URL"
           echo "================================================="
           sleep 21600
