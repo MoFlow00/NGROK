@@ -39,19 +39,22 @@ jobs:
           cd /home/runner/Downloads
           python3 -m http.server 8080 &
 
-          # 2. تشغيل نفق المتصفح
+          # 2. تشغيل الأنفاق
           cloudflared tunnel --url http://localhost:3000 --logfile browser_tunnel.log &
-
-          # 3. تشغيل نفق VLC
           cloudflared tunnel --url http://localhost:8080 --logfile vlc_tunnel.log &
 
-          sleep 7
+          sleep 8
+
+          BROWSER_URL=$(grep -o 'https://.*\.trycloudflare\.com' browser_tunnel.log | head -n 1)
+          VLC_URL=$(grep -o 'https://.*\.trycloudflare\.com' vlc_tunnel.log | head -n 1)
+
+          # إرسال الرابطين إلى الداشبورد مباشرة
+          echo "::notice title=Browser Link::$BROWSER_URL"
+          echo "::notice title=VLC Stream Link::$VLC_URL"
 
           echo "================================================="
-          echo "1. Cloud Browser Link:"
-          grep -o 'https://.*\.trycloudflare.com' browser_tunnel.log | head -n 1
+          echo "1. Cloud Browser Link: $BROWSER_URL"
           echo ""
-          echo "2. VLC Streaming Directory Link:"
-          grep -o 'https://.*\.trycloudflare.com' vlc_tunnel.log | head -n 1
+          echo "2. VLC Streaming Directory Link: $VLC_URL"
           echo "================================================="
           sleep 21600
