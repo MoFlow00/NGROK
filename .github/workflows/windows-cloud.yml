@@ -1,0 +1,52 @@
+name: Cloud Windows 10 (Native Desktop)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
+      - name: Launch Dockerized Windows (Dockur KVM)
+        run: |
+          # تشغيل ويندوز مجرد وسريع مع تخصيص الموارد وتسريع KVM
+          docker run -d \
+            --name=windows-vm \
+            --privileged \
+            -p 8006:8006 \
+            -e VERSION="win10" \
+            -e RAM_SIZE="6G" \
+            -e CPU_CORES="2" \
+            -e DISK_SIZE="25G" \
+            --device=/dev/kvm \
+            --cap-add=NET_ADMIN \
+            dockur/windows
+
+      - name: Start Cloudflare Tunnel & Verification
+        run: |
+          # نفق الويب على منفذ 8006 (الواجهة الرسومية للويندوز عبر المتصفح)
+          cloudflared tunnel --no-tls-verify --url http://127.0.0.1:8006 --logfile win_tunnel.log &
+
+          echo "Waiting for Windows environment to boot..."
+          WIN_URL=""
+          for i in {1..30}; do
+            WIN_URL=$(grep -o 'https://.*\.trycloudflare\.com' win_tunnel.log | head -n 1 || true)
+            if [ -n "$WIN_URL" ]; then
+              echo "Windows Tunnel is ready!"
+              break
+            fi
+            sleep 2
+          done
+
+          # إرسال الرابط للداشبورد فوراً
+          echo "::notice title=WINDOWS_URL::$WIN_URL"
+
+          echo "================================================="
+          echo "WINDOWS_URL: $WIN_URL"
+          echo "================================================="
+          sleep 21600
