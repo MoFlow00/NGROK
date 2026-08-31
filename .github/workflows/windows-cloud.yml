@@ -1,4 +1,4 @@
-name: Ultralight High-Speed Desktop (WebRTC & Huge Game Library)
+name: Cloud Game Desktop
 
 on:
   workflow_dispatch:
@@ -6,19 +6,19 @@ on:
 jobs:
   run-desktop:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+
     steps:
       - name: Install Cloudflared Tunnel
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Ultralight Kasm Container
+      - name: Launch Kasm Desktop
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
         run: |
           PASS="${VNC_PW:-retro12345}"
-
-          # تشغيل حاوية Kasm بصلاحيات كاملة
           docker run -d \
             --name=kasm-desktop \
             --privileged \
@@ -26,260 +26,141 @@ jobs:
             -p 6901:6901 \
             -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
+          sleep 12
 
-          echo "Configuring Core Tools, WARP Bypass & Retro Game Vault..."
-          sleep 5
+      - name: Install Desktop Tools
+        run: |
+          docker exec -u 0 kasm-desktop bash -lc 'dpkg --add-architecture i386'
+          docker exec -u 0 kasm-desktop bash -lc 'apt-get update'
+          docker exec -u 0 kasm-desktop bash -lc 'DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64 winetricks cabextract p7zip-full unzip unrar aria2 axel curl wget zenity xdotool vlc file xdg-utils'
 
-          # تثبيت الأدوات الأساسية ومكتبة الألعاب
-          docker exec -u 0 kasm-desktop bash -c "
-            echo 'ALL ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
-            rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list 2>/dev/null || true &&
-            dpkg --add-architecture i386 &&
-            
-            # إضافة Cloudflare WARP لفك حظر يوتيوب
-            curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg &&
-            echo 'deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ jammy main' | tee /etc/apt/sources.list.d/cloudflare-warp.list &&
-            
-            apt-get update -y &&
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-              cloudflare-warp \
-              vlc \
-              p7zip-full \
-              unzip \
-              axel \
-              wget \
-              curl \
-              wine \
-              wine32 \
-              wine64 \
-              xdotool \
-              zenity \
-              tint2 \
-              libgl1-mesa-dri \
-              libgl1-mesa-glx
+      - name: Configure Wine And Game Folders
+        run: |
+          docker exec -u 0 kasm-desktop bash -lc 'mkdir -p /home/kasm-user/Downloads /home/kasm-user/Games /home/kasm-user/Desktop && chown -R kasm-user:kasm-user /home/kasm-user/Downloads /home/kasm-user/Games /home/kasm-user/Desktop'
+          docker exec -u 1000 kasm-desktop bash -lc 'export DISPLAY=${DISPLAY:-:1}; export WINEPREFIX=/home/kasm-user/.wine; wineboot --init || true'
 
-            # تشغيل WARP Proxy لفك حظر يوتيوب
-            warp-svc &
-            sleep 3
-            warp-cli --accept-tos registration new || true
-            warp-cli --accept-tos mode proxy || true
-            warp-cli --accept-tos proxy port 40000 || true
-            warp-cli --accept-tos connect || true
+      - name: Install Official WinRAR
+        run: |
+          docker exec -u 1000 kasm-desktop bash -lc 'export DISPLAY=${DISPLAY:-:1}; export WINEPREFIX=/home/kasm-user/.wine; cd /home/kasm-user/Downloads; wget -q -O winrar-x64.exe https://www.rarlab.com/rar/winrar-x64-723.exe; wine winrar-x64.exe /s || true'
 
-            # ضبط كروم لاستخدام البروكسي تلقائياً
-            sed -i 's|Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --proxy-server=\"socks5://127.0.0.1:40000\" --no-sandbox|g' /usr/share/applications/google-chrome.desktop 2>/dev/null || true
+      - name: Create Fast Downloader
+        run: |
+          docker exec -u 0 kasm-desktop bash -lc 'cat > /usr/local/bin/fast-download <<"EOF"
+#!/bin/bash
+URL="$1"
+[ -z "$URL" ] && exit 1
+mkdir -p /home/kasm-user/Downloads
+cd /home/kasm-user/Downloads
+exec aria2c -x16 -s16 -k1M --file-allocation=none --summary-interval=1 "$URL"
+EOF
+chmod +x /usr/local/bin/fast-download'
+          docker exec -u 0 kasm-desktop bash -lc 'cat > /usr/local/bin/download-url <<"EOF"
+#!/bin/bash
+URL=$(zenity --entry --title="Fast Downloader" --text="Paste a direct download URL") || exit 0
+[ -z "$URL" ] && exit 0
+fast-download "$URL"
+zenity --info --title="Download complete" --text="The file is in Downloads." || true
+EOF
+chmod +x /usr/local/bin/download-url'
 
-            # إنشاء مكتبة الألعاب الشاملة (Game Hub & Downloader)
-            cat << 'EOF' > /usr/local/bin/game-downloader
-          #!/bin/bash
-          CHOICE=\$(zenity --list --title=\"Retro & Portable Games Vault\" --text=\"Choose a game to download and play instantly:\" --radiolist \
-            --column=\"Pick\" --column=\"Category\" --column=\"Game Title\" \
-            TRUE  \"RTS\"     \"Red Alert 2 & Yuri's Revenge\" \
-            FALSE \"RTS\"     \"Stronghold Crusader HD\" \
-            FALSE \"RTS\"     \"Warcraft III: The Frozen Throne\" \
-            FALSE \"RTS\"     \"Age of Empires II Portable\" \
-            FALSE \"FPS\"     \"Counter-Strike 1.6 Portable\" \
-            FALSE \"FPS\"     \"Half-Life 1 Original\" \
-            FALSE \"FPS\"     \"Call of Duty 2 Portable\" \
-            FALSE \"OpenWorld\" \"GTA Vice City Portable\" \
-            FALSE \"OpenWorld\" \"GTA San Andreas Portable\" \
-            FALSE \"Racing\"  \"Need For Speed: Underground 2\" \
-            FALSE \"Racing\"  \"Need For Speed: Most Wanted\" \
-            FALSE \"Arcade\"  \"Crazy Taxi Portable\" \
-            FALSE \"Arcade\"  \"Road Rash Classic\" \
-            FALSE \"Web\"     \"Browse MyAbandonware.com (Browser)\" \
-            FALSE \"Custom\"  \"Paste Custom Direct Game Link (.zip/.7z)\" \
-            --height=480 --width=540)
+      - name: Configure EXE Double Click
+        run: |
+          docker exec -u 0 kasm-desktop bash -lc 'mkdir -p /home/kasm-user/.local/share/applications'
+          docker exec -u 0 kasm-desktop bash -lc 'cat > /home/kasm-user/.local/share/applications/wine-exe.desktop <<"EOF"
+[Desktop Entry]
+Name=Windows EXE
+Comment=Run Windows programs with Wine
+Exec=run-exe %f
+Type=Application
+Terminal=false
+NoDisplay=true
+MimeType=application/x-ms-dos-executable;application/x-msdownload;application/x-msi;
+EOF
+cat > /usr/local/bin/run-exe <<"EOF"
+#!/bin/bash
+FILE="$1"
+[ -z "$FILE" ] && exit 1
+export WINEPREFIX=/home/kasm-user/.wine
+cd "$(dirname "$FILE")"
+exec wine "$FILE"
+EOF
+chmod +x /usr/local/bin/run-exe
+chown -R kasm-user:kasm-user /home/kasm-user/.local'
+          docker exec -u 1000 kasm-desktop bash -lc 'update-desktop-database /home/kasm-user/.local/share/applications 2>/dev/null || true; xdg-mime default wine-exe.desktop application/x-ms-dos-executable 2>/dev/null || true; xdg-mime default wine-exe.desktop application/x-msdownload 2>/dev/null || true; xdg-mime default wine-exe.desktop application/x-msi 2>/dev/null || true'
 
-          if [ -z \"\$CHOICE\" ]; then exit 0; fi
-          mkdir -p /home/kasm-user/Desktop/Games && cd /home/kasm-user/Desktop/Games
+      - name: Create Game Hub And Shortcuts
+        run: |
+          docker exec -u 0 kasm-desktop bash -lc 'cat > /usr/local/bin/game-hub <<"EOF"
+#!/bin/bash
+CHOICE=$(zenity --list --title="Game Hub" --text="Choose what you want" --radiolist --height=360 --width=520 --column="" --column="Action" TRUE "Fast Download" FALSE "Open Downloads" FALSE "Open Games" FALSE "Open Internet Archive Software" FALSE "Open MyAbandonware") || exit 0
+case "$CHOICE" in
+  "Fast Download") download-url ;;
+  "Open Downloads") xdg-open /home/kasm-user/Downloads ;;
+  "Open Games") xdg-open /home/kasm-user/Games ;;
+  "Open Internet Archive Software") xdg-open "https://archive.org/details/software" ;;
+  "Open MyAbandonware") xdg-open "https://www.myabandonware.com/browse/platform/windows/" ;;
+esac
+EOF
+chmod +x /usr/local/bin/game-hub'
+          docker exec -u 0 kasm-desktop bash -lc 'cat > /home/kasm-user/Desktop/Game_Hub.desktop <<"EOF"
+[Desktop Entry]
+Type=Application
+Name=Game Hub
+Comment=Games, downloads and tools
+Exec=game-hub
+Icon=applications-games
+Terminal=false
+EOF
+cat > /home/kasm-user/Desktop/Fast_Download.desktop <<"EOF"
+[Desktop Entry]
+Type=Application
+Name=Fast Download
+Exec=download-url
+Icon=folder-download
+Terminal=false
+EOF
+cat > /home/kasm-user/Desktop/Downloads.desktop <<"EOF"
+[Desktop Entry]
+Type=Application
+Name=Downloads
+Exec=xdg-open /home/kasm-user/Downloads
+Icon=folder-download
+Terminal=false
+EOF
+cat > /home/kasm-user/Desktop/Games.desktop <<"EOF"
+[Desktop Entry]
+Type=Application
+Name=Games
+Exec=xdg-open /home/kasm-user/Games
+Icon=applications-games
+Terminal=false
+EOF
+cat > /home/kasm-user/Desktop/WinRAR.desktop <<"EOF"
+[Desktop Entry]
+Type=Application
+Name=WinRAR
+Comment=WinRAR archive manager
+Exec=wine /home/kasm-user/.wine/drive_c/Program\\ Files/WinRAR/WinRAR.exe
+Icon=application-x-rar
+Terminal=false
+EOF
+chmod +x /home/kasm-user/Desktop/*.desktop
+chown -R kasm-user:kasm-user /home/kasm-user/Desktop'
 
-          download_and_extract() {
-            local url=\"\$1\"
-            local folder_name=\"\$2\"
-            local exe_name=\"\$3\"
-            local title=\"\$4\"
-
-            (
-              echo \"15\"; echo \"# Downloading \$title at high speed...\";
-              axel -n 16 \"\$url\" -o game_archive.pkg || wget -O game_archive.pkg \"\$url\"
-              echo \"65\"; echo \"# Extracting and preparing files...\";
-              mkdir -p \"/home/kasm-user/Desktop/Games/\$folder_name\"
-              7z x game_archive.pkg -o\"/home/kasm-user/Desktop/Games/\$folder_name\" -y
-              rm -f game_archive.pkg
-
-              # تطبيق معالج الرسوميات ddraw لمنع الشاشة السوداء
-              TARGET_DIR=\$(find \"/home/kasm-user/Desktop/Games/\$folder_name\" -type f -iname \"*.exe\" -exec dirname {} \; | head -n 1)
-              if [ -z \"\$TARGET_DIR\" ]; then TARGET_DIR=\"/home/kasm-user/Desktop/Games/\$folder_name\"; fi
-              cd \"\$TARGET_DIR\"
-              wget -q -O ddraw.dll https://github.com/FunkyFr3sh/cnc-ddraw/releases/latest/download/ddraw.dll 2>/dev/null || true
-              cat << 'INI' > ddraw.ini
-          [ddraw]
-          renderer=gdi
-          fullscreen=false
-          windowed=true
-          width=1024
-          height=768
-          adjmouse=true
-          INI
-              # إنشاء أيقونة تشغيل مباشرة على سطح المكتب
-              cat << DESK > /home/kasm-user/Desktop/Play_\${folder_name}.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=Play \$title
-          Exec=bash -c 'cd \"\$TARGET_DIR\" && WINEDLLOVERRIDES=\"ddraw=n,b\" LIBGL_ALWAYS_SOFTWARE=1 wine \"\$exe_name\"'
-          Icon=applications-games
-          Terminal=false
-          DESK
-              chmod +x /home/kasm-user/Desktop/Play_\${folder_name}.desktop
-              echo \"100\"; echo \"# Ready to play!\";
-            ) | zenity --progress --title=\"Setting up \$title\" --percentage=0 --auto-close
-            zenity --info --text=\"\$title is ready! Double-click the icon on Desktop to play.\"
-          }
-
-          case \"\$CHOICE\" in
-            \"Red Alert 2 & Yuri's Revenge\")
-              download_and_extract \"https://cdn.kippykip.com/bin/portables/Command%20&%20Conquer%20Red%20Alert%20II%20Portable.zip\" \"RedAlert2\" \"Yuri's Revenge.exe\" \"Red Alert 2 & Yuri\"
-              ;;
-            \"Stronghold Crusader HD\")
-              download_and_extract \"https://archive.org/download/stronghold-crusader-hd-portable/Stronghold_Crusader.zip\" \"Stronghold\" \"Stronghold Crusader.exe\" \"Stronghold Crusader\"
-              ;;
-            \"Warcraft III: The Frozen Throne\")
-              download_and_extract \"https://archive.org/download/warcraft-3-tft-portable/Warcraft3_TFT.zip\" \"Warcraft3\" \"Frozen Throne.exe\" \"Warcraft III\"
-              ;;
-            \"Age of Empires II Portable\")
-              download_and_extract \"https://archive.org/download/age-of-empires-2-portable/Age2HD.zip\" \"AgeOfEmpires2\" \"age2_x1.exe\" \"Age of Empires II\"
-              ;;
-            \"Counter-Strike 1.6 Portable\")
-              download_and_extract \"https://archive.org/download/cs16portable/cs16.zip\" \"CS16\" \"hl.exe -game cstrike\" \"Counter-Strike 1.6\"
-              ;;
-            \"Half-Life 1 Original\")
-              download_and_extract \"https://archive.org/download/half-life-1-portable/HalfLife.zip\" \"HalfLife\" \"hl.exe\" \"Half-Life 1\"
-              ;;
-            \"Call of Duty 2 Portable\")
-              download_and_extract \"https://archive.org/download/cod2-portable/cod2.zip\" \"COD2\" \"CoD2SP_s.exe\" \"Call of Duty 2\"
-              ;;
-            \"GTA Vice City Portable\")
-              download_and_extract \"https://archive.org/download/gta-vc-portable/gta-vc.zip\" \"GTAVC\" \"gta-vc.exe\" \"GTA Vice City\"
-              ;;
-            \"GTA San Andreas Portable\")
-              download_and_extract \"https://archive.org/download/gta-sa-portable/gta-sa.zip\" \"GTASA\" \"gta_sa.exe\" \"GTA San Andreas\"
-              ;;
-            \"Need For Speed: Underground 2\")
-              download_and_extract \"https://archive.org/download/nfsu2-portable/NFSU2.zip\" \"NFSU2\" \"SPEED2.EXE\" \"NFS Underground 2\"
-              ;;
-            \"Need For Speed: Most Wanted\")
-              download_and_extract \"https://archive.org/download/nfs-most-wanted-portable/NFSMW.zip\" \"NFSMW\" \"speed.exe\" \"NFS Most Wanted\"
-              ;;
-            \"Crazy Taxi Portable\")
-              download_and_extract \"https://archive.org/download/crazy-taxi-pc-portable/CrazyTaxi.zip\" \"CrazyTaxi\" \"CrazyTaxi.exe\" \"Crazy Taxi\"
-              ;;
-            \"Road Rash Classic\")
-              download_and_extract \"https://archive.org/download/road-rash-pc-portable/RoadRash.zip\" \"RoadRash\" \"RASH.EXE\" \"Road Rash\"
-              ;;
-            \"Browse MyAbandonware.com (Browser)\")
-              google-chrome-stable --proxy-server=\"socks5://127.0.0.1:40000\" --no-sandbox \"https://www.myabandonware.com/browse/platform/windows/\" &
-              ;;
-            \"Paste Custom Direct Game Link (.zip/.7z)\")
-              LINK=\$(zenity --entry --title=\"Direct Game Link\" --text=\"Paste the direct link to the .zip or .7z game file:\" --width=480)
-              if [ -n \"\$LINK\" ]; then
-                download_and_extract \"\$LINK\" \"CustomGame\" \"Game.exe\" \"Custom Game\"
-              fi
-              ;;
-          esac
-          EOF
-            chmod +x /usr/local/bin/game-downloader
-
-            # إعداد الشريط العائم الصغير في أعلى اليمين
-            mkdir -p /home/kasm-user/.config/tint2
-            cat << 'EOF' > /home/kasm-user/.config/tint2/top-panel.tint2rc
-          panel_items = L
-          panel_position = top right horizontal
-          panel_size = 320 32
-          panel_margin = 10 10
-          panel_padding = 4 4 4
-          panel_background_id = 1
-          wm_menu = 0
-          panel_dock = 0
-          panel_layer = top
-
-          launcher_padding = 4 2
-          launcher_background_id = 0
-          launcher_item_app = /home/kasm-user/Desktop/Game_Downloader.desktop
-          launcher_item_app = /home/kasm-user/Desktop/Show_Desktop.desktop
-          launcher_item_app = /home/kasm-user/Desktop/Terminal.desktop
-          launcher_item_app = /home/kasm-user/Desktop/Kill_All_Games.desktop
-
-          background_color = #1e1e2e 85
-          border_color = #89b4fa 50
-          border_width = 1
-          border_radius = 6
-          EOF
-
-            # إنشاء الاختصارات
-            cat << 'EOF' > /home/kasm-user/Desktop/Game_Downloader.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=Game Vault
-          Exec=game-downloader
-          Icon=package-x-generic
-          Terminal=false
-          EOF
-
-            cat << 'EOF' > /home/kasm-user/Desktop/Show_Desktop.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=Desktop
-          Exec=xdotool key Super+d
-          Icon=user-desktop
-          Terminal=false
-          EOF
-
-            cat << 'EOF' > /home/kasm-user/Desktop/Terminal.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=Terminal
-          Exec=x-terminal-emulator
-          Icon=utilities-terminal
-          Terminal=false
-          EOF
-
-            cat << 'EOF' > /home/kasm-user/Desktop/Kill_All_Games.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=Kill Games
-          Exec=killall -9 wine wine64 wineserver YURI.exe RA2.EXE GAME.EXE hl.exe gta-vc.exe gta_sa.exe SPEED2.EXE speed.exe 2>/dev/null || wineserver -k
-          Icon=process-stop
-          Terminal=false
-          EOF
-
-            chmod +x /home/kasm-user/Desktop/*.desktop
-            chown -R kasm-user:kasm-user /home/kasm-user/Desktop /home/kasm-user/.config
-
-            # تشغيل الشريط تلقائياً
-            echo 'tint2 -c /home/kasm-user/.config/tint2/top-panel.tint2rc &' >> /dockerstartup/custom_startup.sh
-            tint2 -c /home/kasm-user/.config/tint2/top-panel.tint2rc >/dev/null 2>&1 &
-          "
-
-      - name: Start Multi-Protocol Tunnel
+      - name: Start Cloudflare Tunnel
         run: |
           cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 > tunnel.log 2>&1 &
-
-          echo "Starting Cloudflare Tunnel..."
-          DESKTOP_URL=""
           for i in {1..60}; do
             DESKTOP_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | tail -n 1 || true)
-            if [ -n "$DESKTOP_URL" ]; then
-              echo "Desktop is ready!"
-              break
-            fi
+            if [ -n "$DESKTOP_URL" ]; then break; fi
             sleep 2
           done
-
+          if [ -z "$DESKTOP_URL" ]; then cat tunnel.log; exit 1; fi
           echo "================================================="
           echo "DESKTOP_URL: $DESKTOP_URL"
           echo "USERNAME:    kasm_user"
           echo "PASSWORD:    ${{ secrets.BROWSER_PASSWORD }}"
           echo "================================================="
 
-          sleep 21600
+      - name: Keep Session Alive
+        run: sleep 21600
