@@ -73,35 +73,8 @@ jobs:
       - name: Create Game Launcher
         run: |
           docker exec wine-lab bash -lc 'mkdir -p /config/Desktop'
-          docker exec wine-lab bash -lc 'cat > /config/Desktop/Wine-Game-Terminal.desktop <<"EOF"
-[Desktop Entry]
-Type=Application
-Name=Wine Game Terminal
-Comment=Run Windows EXE games with Wine
-Exec=xfce4-terminal
-Icon=utilities-terminal
-Terminal=false
-Categories=Game;Utility;
-EOF
-chmod +x /config/Desktop/Wine-Game-Terminal.desktop
-chown 1000:1000 /config/Desktop/Wine-Game-Terminal.desktop'
-
-          docker exec wine-lab bash -lc 'cat > /config/Downloads/WINE-LAB-README.txt <<"EOF"
-CloudRunner Wine Game Lab
-
-Downloads: /config/Downloads
-Games: /config/Games
-Wine prefix: /config/.wine
-
-Run an EXE:
-  wine /config/Downloads/game.exe
-
-Useful:
-  winecfg
-  winetricks
-  wineboot
-EOF
-chown 1000:1000 /config/Downloads/WINE-LAB-README.txt'
+          docker exec wine-lab bash -lc 'printf "%s\\n" "[Desktop Entry]" "Type=Application" "Name=Wine Game Terminal" "Comment=Run Windows EXE games with Wine" "Exec=xfce4-terminal" "Icon=utilities-terminal" "Terminal=false" "Categories=Game;Utility;" > /config/Desktop/Wine-Game-Terminal.desktop && chmod +x /config/Desktop/Wine-Game-Terminal.desktop && chown 1000:1000 /config/Desktop/Wine-Game-Terminal.desktop'
+          docker exec wine-lab bash -lc 'printf "%s\\n" "CloudRunner Wine Game Lab" "" "Downloads: /config/Downloads" "Games: /config/Games" "Wine prefix: /config/.wine" "" "Run an EXE:" "  wine /config/Downloads/game.exe" "" "Useful:" "  winecfg" "  winetricks" "  wineboot" > /config/Downloads/WINE-LAB-README.txt && chown 1000:1000 /config/Downloads/WINE-LAB-README.txt'
 
       - name: Start Cloudflare Tunnel
         run: |
