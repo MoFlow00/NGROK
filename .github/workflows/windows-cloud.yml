@@ -18,7 +18,7 @@ jobs:
         run: |
           PASS="${VNC_PW:-retro12345}"
 
-          # 1. تشغيل الحاوية مع تمرير كلمة المرور الرسمية
+          # 1. تشغيل الحاوية
           docker run -d \
             --name=kasm-desktop \
             --privileged \
@@ -27,19 +27,19 @@ jobs:
             -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
 
-          # 2. منح kasm_user صلاحية sudo بدون كلمة سر نهائياً
-          docker exec -u 0 kasm-desktop bash -c "echo 'kasm_user ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers"
+          echo "Waiting for container initialization..."
+          sleep 5
 
-          # 3. تثبيت Wine في الخلفية بهدوء
+          # 2. منح كافة الصلاحيات وتثبيت Wine كاملاً قبل توليد الرابط
           docker exec -u 0 kasm-desktop bash -c "
+            echo 'ALL ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
             dpkg --add-architecture i386 &&
-            apt-get update -qq &&
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wine wine32 wine64
-          " >/dev/null 2>&1 &
+            apt-get update &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64
+          "
 
       - name: Start Stable Cloudflare Tunnel
         run: |
-          # استخدام protocol http2 لاستقرار النفق المباشر
           cloudflared tunnel --protocol http2 --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
 
           echo "Waiting for WebRTC Desktop Tunnel..."
