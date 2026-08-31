@@ -12,13 +12,13 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Kasm WebRTC Desktop
+      - name: Launch Kasm Gaming Desktop
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
         run: |
           PASS="${VNC_PW:-retro12345}"
 
-          # 1. تشغيل الحاوية
+          # 1. تشغيل حاوية Kasm
           docker run -d \
             --name=kasm-desktop \
             --privileged \
@@ -27,16 +27,38 @@ jobs:
             -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
 
-          echo "Waiting for container initialization..."
+          echo "Configuring Gaming Environment & Emergency Shortcuts..."
           sleep 5
 
-          # 2. إزالة المفاتيح المعطوبة وتثبيت Wine بصلاحيات Root
+          # 2. إعداد الصلاحيات، تثبيت Wine، معالجات العرض وأزرار الطوارئ
           docker exec -u 0 kasm-desktop bash -c "
             echo 'ALL ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
             rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list 2>/dev/null || true &&
             dpkg --add-architecture i386 &&
             apt-get update -y &&
-            DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64
+            DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64 p7zip-full xdotool xterm
+
+            # إنشاء زر طوارئ على سطح المكتب لإنهاء الألعاب المعلقة
+            cat << 'EOF' > /home/kasm-user/Desktop/Kill_All_Games.desktop
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Force Kill Games
+          Comment=Emergency exit for frozen games
+          Exec=killall -9 wine wine64 wineserver YURI.exe RA2.EXE GAME.EXE
+          Icon=process-stop
+          Terminal=false
+          Categories=Utility;
+          EOF
+            chmod +x /home/kasm-user/Desktop/Kill_All_Games.desktop
+            chown kasm-user:kasm-user /home/kasm-user/Desktop/Kill_All_Games.desktop
+
+            # إنشاء سكربت تشغيل آمن داخل نافذة محددة الأبعاد (Virtual Desktop)
+            cat << 'EOF' > /usr/local/bin/play-windowed
+          #!/bin/bash
+          wine explorer /desktop=Game,1024x768 \"\$@\"
+          EOF
+            chmod +x /usr/local/bin/play-windowed
           "
 
       - name: Start Stable Cloudflare Tunnel
