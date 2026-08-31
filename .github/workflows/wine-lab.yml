@@ -19,30 +19,30 @@ jobs:
           CUSTOM_USER: ${{ secrets.BROWSER_USER }}
           PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
+          mkdir -p /home/runner/Downloads
           docker run -d \
             --name=wine-lab \
             --privileged \
             --security-opt seccomp=unconfined \
             --shm-size=2gb \
             -p 3000:3000 \
-            -p 3001:3001 \
             -v /home/runner/Downloads:/config/Downloads \
             -e PUID=1000 \
             -e PGID=1000 \
-            -e TZ=Etc/UTC \
-            -e PIXELFLUX_WAYLAND=false \
-            -e SELKIES_ENCODER=x264enc \
-            -e SELKIES_FRAMERATE=60 \
-            -e SELKIES_UI_TITLE="CloudRunner Wine Lab" \
             -e CUSTOM_USER="$CUSTOM_USER" \
             -e PASSWORD="$PASSWORD" \
+            -e TITLE=CloudRunner-Wine-Lab \
+            -e START_DOCKER=true \
+            -e PIXELFLUX_WAYLAND=false \
+            -e PIXELFLUX_ENCODER=h264 \
+            -e PIXELFLUX_FPS=60 \
             lscr.io/linuxserver/webtop:ubuntu-xfce
 
       - name: Install Wine and Game Tools
         run: |
           docker exec wine-lab bash -lc 'dpkg --add-architecture i386'
           docker exec wine-lab bash -lc 'apt-get update'
-          docker exec wine-lab bash -lc 'DEBIAN_FRONTEND=noninteractive apt-get install -y wine64 wine32:i386 winetricks cabextract p7zip-full unzip curl wget file xfce4-terminal'
+          docker exec wine-lab bash -lc 'DEBIAN_FRONTEND=noninteractive apt-get install -y wine64 wine32:i386 winetricks cabextract p7zip-full unzip curl wget file'
 
       - name: Install Chromium Browser
         run: |
@@ -58,6 +58,25 @@ jobs:
         run: |
           docker exec -u 1000 -e HOME=/config wine-lab bash -lc 'export DISPLAY=:0; export WINEPREFIX=/config/.wine; wineboot --init'
 
+      - name: Repair XFCE Session
+        run: |
+          for i in {1..30}; do
+            if docker exec wine-lab bash -lc 'test -S /tmp/.X11-unix/X0'; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec -u 1000 -e HOME=/config -e DISPLAY=:0 wine-lab bash -lc '
+            pkill -u 1000 xfce4-panel || true
+            pkill -u 1000 xfdesktop || true
+            pkill -u 1000 xfwm4 || true
+            nohup xfwm4 --replace >/config/xfwm4.log 2>&1 &
+            sleep 2
+            nohup xfdesktop --replace >/config/xfdesktop.log 2>&1 &
+            sleep 2
+            nohup xfce4-panel >/config/xfce4-panel.log 2>&1 &
+          '
+
       - name: Add Desktop Shortcuts
         run: |
           docker exec wine-lab bash -lc 'cat > /config/Desktop/Chromium.desktop <<"EOF"
@@ -66,7 +85,7 @@ jobs:
           Type=Application
           Name=Chromium Browser
           Comment=CloudRunner web browser
-          Exec=chromium --no-sandbox --start-maximized %U
+          Exec=chromium --no-sandbox %U
           Icon=chromium
           Terminal=false
           Categories=Network;WebBrowser;
@@ -79,19 +98,34 @@ jobs:
           Version=1.0
           Type=Application
           Name=Wine Game Terminal
-          Comment=Run Windows games with Wine
+          Comment=Open a terminal for running Windows games with Wine
           Exec=xfce4-terminal
           Icon=utilities-terminal
           Terminal=false
-          Categories=System;Game;
+          Categories=System;
           EOF
           chmod +x /config/Desktop/Wine-Terminal.desktop
           chown 1000:1000 /config/Desktop/Wine-Terminal.desktop'
 
-      - name: Refresh XFCE Desktop and Menu
+      - name: Add Wine Tools to Applications Menu
         run: |
-          docker exec wine-lab bash -lc 'update-desktop-database /usr/share/applications >/dev/null 2>&1 || true'
-          docker exec -u 1000 -e HOME=/config wine-lab bash -lc 'DISPLAY=:0 xfdesktop --reload >/dev/null 2>&1 || true'
+          docker exec wine-lab bash -lc 'cat > /usr/share/applications/wine-game-lab.desktop <<"EOF"
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Wine Game Lab
+          Comment=Run Windows EXE files with Wine
+          Exec=xfce4-terminal --command="bash -lc \"export DISPLAY=:0; export WINEPREFIX=/config/.wine; echo Wine Game Lab; echo; echo Run: wine /config/Downloads/game.exe; exec bash\""
+          Icon=wine
+          Terminal=false
+          Categories=Utility;Game;
+          EOF
+          update-desktop-database /usr/share/applications 2>/dev/null || true'
+
+      - name: Launch Chromium Automatically
+        run: |
+          sleep 3
+          docker exec -u 1000 -e HOME=/config -e DISPLAY=:0 wine-lab bash -lc 'nohup chromium --no-sandbox --start-maximized >/config/chromium.log 2>&1 &'
 
       - name: Create Lab Info
         run: |
@@ -108,20 +142,6 @@ jobs:
             "Useful tools: winecfg, winetricks, wineboot" \
             > /config/Downloads/WINE-LAB-README.txt'
           docker exec wine-lab bash -lc 'chown 1000:1000 /config/Downloads/WINE-LAB-README.txt'
-
-      - name: Wait for XFCE Display
-        run: |
-          for i in {1..60}; do
-            if docker exec wine-lab bash -lc 'test -S /tmp/.X11-unix/X0'; then
-              echo "XFCE display is ready"
-              break
-            fi
-            sleep 2
-          done
-
-      - name: Launch Chromium Automatically
-        run: |
-          docker exec -u 1000 -e HOME=/config -e DISPLAY=:0 wine-lab bash -lc 'nohup chromium --no-sandbox --start-maximized >/config/chromium.log 2>&1 &'
 
       - name: Start Cloudflare Tunnel
         run: |
