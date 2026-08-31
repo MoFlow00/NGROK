@@ -7,43 +7,45 @@ jobs:
   run-desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Desktop Environment & Wine
+      - name: Enable 32-bit Architecture & Install Wine & Desktop
         run: |
+          # 1. تفعيل معمارية i386 لتثبيت دعم ألعاب 32-bit القديمة
+          sudo dpkg --add-architecture i386
           sudo apt-get update
+
+          # 2. تثبيت واجهة XFCE ومحرك تشغيل ألعاب الويندوز Wine
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xfce4 xfce4-terminal xvfb pulseaudio \
-            wine wine32 winetricks wget curl jq
+            wine wine32 wine64 winetricks wget curl jq
 
       - name: Install RustDesk
         run: |
-          # تنزيل وتثبيت أحدث حزمة deb لـ RustDesk
-          RUSTDESK_DEB="rustdesk.deb"
-          wget -q -O $RUSTDESK_DEB https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.deb || \
-          wget -q -O $RUSTDESK_DEB $(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | jq -r '.assets[] | select(.name | endswith("x86_64.deb")) | .browser_download_url' | head -n 1)
-          sudo dpkg -i --force-depends $RUSTDESK_DEB || sudo apt-get -f install -y
+          # تنزيل حزمة deb الرسمية لـ RustDesk وتثبيتها
+          wget -q -O rustdesk.deb https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.deb || \
+          wget -q -O rustdesk.deb $(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | jq -r '.assets[] | select(.name | endswith("x86_64.deb")) | .browser_download_url' | head -n 1)
+          sudo dpkg -i --force-depends rustdesk.deb || sudo apt-get -f install -y
 
       - name: Start Virtual Display & RustDesk Service
         env:
           CUSTOM_PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          # 1. تشغيل الشاشة الافتراضية بدقة 720p السريعة
+          # 1. تشغيل الشاشة الافتراضية
           Xvfb :1 -screen 0 1280x720x24 &
           export DISPLAY=:1
           sleep 2
 
-          # 2. تشغيل واجهة الديسكتوب
+          # 2. تشغيل واجهة الديسكتوب الخفيفة
           startxfce4 &
           sleep 3
 
-          # 3. تعيين كلمة المرور لـ RustDesk
+          # 3. ضبط كلمة مرور الاتصال
           PASS="${CUSTOM_PASSWORD:-retro12345}"
           sudo rustdesk --password "$PASS"
 
-          # 4. تشغيل خدمة RustDesk
+          # 4. تشغيل خدمة RustDesk واستخراج معرف الاتصال ID
           sudo rustdesk --service &
-          sleep 5
+          sleep 6
 
-          # 5. استخراج الـ ID المخصص للاتصال
           RUSTDESK_ID=$(rustdesk --get-id)
 
           echo "::notice title=RUSTDESK_ID::$RUSTDESK_ID"
@@ -54,5 +56,5 @@ jobs:
           echo "PASSWORD:    $PASS"
           echo "================================================="
 
-          # إبقاء السيرفر يعمل لمدة 6 ساعات
+          # إبقاء السيرفر نشطاً لمدة 6 ساعات
           sleep 21600
