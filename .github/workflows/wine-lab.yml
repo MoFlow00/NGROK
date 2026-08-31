@@ -14,11 +14,6 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Prepare Downloads Directory
-        run: |
-          mkdir -p /home/runner/Downloads
-          chmod 777 /home/runner/Downloads
-
       - name: Start Ubuntu XFCE Desktop
         env:
           CUSTOM_USER: ${{ secrets.BROWSER_USER }}
@@ -27,7 +22,7 @@ jobs:
           docker run -d \
             --name=wine-lab \
             --privileged \
-            --shm-size=1gb \
+            --shm-size=2gb \
             -p 3000:3000 \
             -v /home/runner/Downloads:/config/Downloads \
             -e PUID=1000 \
@@ -36,27 +31,94 @@ jobs:
             -e PASSWORD="$PASSWORD" \
             lscr.io/linuxserver/webtop:ubuntu-xfce
 
-      - name: Install Wine and 32-bit Support
+      - name: Install Wine and Game Tools
         run: |
           docker exec wine-lab bash -lc 'dpkg --add-architecture i386'
           docker exec wine-lab bash -lc 'apt-get update'
           docker exec wine-lab bash -lc 'DEBIAN_FRONTEND=noninteractive apt-get install -y wine64 wine32:i386 winetricks cabextract p7zip-full unzip curl wget file'
 
-      - name: Install Chromium
+      - name: Install Chromium Browser
         run: |
-          docker exec wine-lab bash -lc 'command -v chromium >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y chromium)'
+          docker exec wine-lab bash -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y chromium'
+          docker exec wine-lab bash -lc 'command -v chromium'
+
+      - name: Prepare Game Lab Directories
+        run: |
+          docker exec wine-lab bash -lc 'mkdir -p /config/Games /config/Downloads /config/Desktop'
+          docker exec wine-lab bash -lc 'chown -R 1000:1000 /config/Games /config/Downloads /config/Desktop'
 
       - name: Initialize Wine Environment
         run: |
-          docker exec -u 1000 -e HOME=/config wine-lab bash -lc 'export DISPLAY=:0; export WINEPREFIX=/config/.wine; mkdir -p /config/Games /config/Downloads; wineboot --init'
+          docker exec -u 1000 -e HOME=/config wine-lab bash -lc 'export DISPLAY=:0; export WINEPREFIX=/config/.wine; wineboot --init'
 
-      - name: Create Game Launcher Helper
+      - name: Add Desktop Shortcuts
         run: |
-          docker exec wine-lab bash -lc 'printf "%s\n" "#!/bin/bash" "export DISPLAY=:0" "export WINEPREFIX=/config/.wine" "wine \"$1\"" > /config/wine-run.sh && chmod +x /config/wine-run.sh'
+          docker exec wine-lab bash -lc 'cat > /config/Desktop/Chromium.desktop <<"EOF"
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Chromium Browser
+          Comment=CloudRunner web browser
+          Exec=chromium --no-sandbox %U
+          Icon=chromium
+          Terminal=false
+          Categories=Network;WebBrowser;
+          EOF
+          chmod +x /config/Desktop/Chromium.desktop
+          chown 1000:1000 /config/Desktop/Chromium.desktop'
+
+          docker exec wine-lab bash -lc 'cat > /config/Desktop/Wine-Terminal.desktop <<"EOF"
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Wine Game Terminal
+          Comment=Open a terminal for running Windows games with Wine
+          Exec=xfce4-terminal
+          Icon=utilities-terminal
+          Terminal=false
+          Categories=System;
+          EOF
+          chmod +x /config/Desktop/Wine-Terminal.desktop
+          chown 1000:1000 /config/Desktop/Wine-Terminal.desktop'
+
+      - name: Add Wine Tools to Applications Menu
+        run: |
+          docker exec wine-lab bash -lc 'cat > /usr/share/applications/wine-game-lab.desktop <<"EOF"
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Wine Game Lab
+          Comment=Run Windows EXE files with Wine
+          Exec=xfce4-terminal --command="bash -lc \"export DISPLAY=:0; export WINEPREFIX=/config/.wine; echo Wine Game Lab; echo; echo Run: wine /config/Downloads/game.exe; exec bash\""
+          Icon=wine
+          Terminal=false
+          Categories=Utility;Game;'
 
       - name: Create Lab Info
         run: |
-          docker exec wine-lab bash -lc 'printf "%s\n" "CloudRunner Wine Game Lab" "" "Downloads: /config/Downloads" "Games: /config/Games" "" "Run a Windows EXE:" "wine /config/Downloads/game.exe" "" "Wine prefix: /config/.wine" "" "Tools: winecfg, winetricks, wineboot" > /config/Downloads/WINE-LAB-README.txt'
+          docker exec wine-lab bash -lc 'printf "%s\n" \
+            "CloudRunner Wine Game Lab" \
+            "" \
+            "Downloads: /config/Downloads" \
+            "Games:     /config/Games" \
+            "Wine prefix: /config/.wine" \
+            "" \
+            "Run a Windows EXE:" \
+            "wine /config/Downloads/game.exe" \
+            "" \
+            "Useful tools: winecfg, winetricks, wineboot" \
+            > /config/Downloads/WINE-LAB-README.txt'
+          docker exec wine-lab bash -lc 'chown 1000:1000 /config/Downloads/WINE-LAB-README.txt'
+
+      - name: Launch Chromium Automatically
+        run: |
+          for i in {1..30}; do
+            if docker exec wine-lab bash -lc 'test -S /tmp/.X11-unix/X0'; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec -u 1000 -e HOME=/config -e DISPLAY=:0 wine-lab bash -lc 'nohup chromium --no-sandbox --start-maximized >/config/chromium.log 2>&1 &'
 
       - name: Start Cloudflare Tunnel
         run: |
