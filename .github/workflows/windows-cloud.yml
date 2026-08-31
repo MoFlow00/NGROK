@@ -1,4 +1,4 @@
-name: High-Performance Cloud Desktop (WebRTC Gaming)
+name: High-Performance Gaming Desktop (WebRTC & Wine)
 
 on:
   workflow_dispatch:
@@ -12,18 +12,28 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Kasm WebRTC Desktop
+      - name: Launch Kasm WebRTC Desktop with Wine Pre-installed
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          # تشغيل سطح مكتب Kasm المخصص للألعاب والبث عالي السرعة
+          PASS="${VNC_PW:-retro12345}"
+
+          # 1. تشغيل حاوية Kasm بكلمة مرور مخصصة للواجهة
           docker run -d \
             --name=kasm-desktop \
             --privileged \
             --shm-size=2gb \
             -p 6901:6901 \
-            -e VNC_PW="${VNC_PW:-retro12345}" \
+            -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
+
+          # 2. تثبيت Wine وتوحيد كلمة مرور sudo للمستخدم kasm_user
+          docker exec -u 0 kasm-desktop bash -c "
+            echo 'kasm_user:$PASS' | chpasswd &&
+            dpkg --add-architecture i386 &&
+            apt-get update &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64
+          " &
 
       - name: Start Cloudflare Tunnel & Verification
         run: |
@@ -44,5 +54,9 @@ jobs:
 
           echo "================================================="
           echo "DESKTOP_URL: $DESKTOP_URL"
+          echo "USERNAME:    kasm_user"
+          echo "PASSWORD:    ${{ secrets.BROWSER_PASSWORD }}"
           echo "================================================="
+
+          # إبقاء الجلسة نشطة لمدة 6 ساعات
           sleep 21600
