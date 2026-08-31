@@ -1,4 +1,4 @@
-name: Cloud Retro Gaming (Kasm Native Desktop)
+name: Cloud Retro Gaming (Wine Desktop)
 
 on:
   workflow_dispatch:
@@ -17,37 +17,41 @@ jobs:
           mkdir -p /home/runner/Games
           chmod 777 /home/runner/Games
 
-      - name: Run Official Kasm Ubuntu Desktop (WebRTC Native)
+      - name: Run Web Desktop Container
         env:
           CUSTOM_USER: ${{ secrets.BROWSER_USER }}
           PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
+          # تشغيل واجهة Webtop XFCE كاملة على المنفذ 3000
           docker run -d \
-            --name=kasm-desktop \
+            --name=wine-desktop \
             --privileged \
-            -p 6901:6901 \
-            -v /home/runner/Games:/home/kasm-user/Desktop/Games \
-            -e VNC_PW="$PASSWORD" \
-            -e KASM_USER="$CUSTOM_USER" \
-            -e KASM_PASSWORD="$PASSWORD" \
-            kasmweb/ubuntu-focal-desktop:1.16.0
+            --shm-size=2gb \
+            -p 3000:3000 \
+            -v /home/runner/Games:/config/Games \
+            -e PUID=1000 \
+            -e PGID=1000 \
+            -e CUSTOM_USER="$CUSTOM_USER" \
+            -e PASSWORD="$PASSWORD" \
+            -e TITLE="Cloud Gaming" \
+            lscr.io/linuxserver/webtop:ubuntu-xfce
 
-      - name: Start Cloudflare Tunnel
+      - name: Start Cloudflare Tunnel & Verification
         run: |
-          # 1. تشغيل النفق وتوجيهه صراحة لـ IPv4
-          cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
+          # 1. تشغيل النفق على منفذ 3000
+          cloudflared tunnel --url http://127.0.0.1:3000 --logfile gaming_tunnel.log &
 
-          # 2. انتظار تشغيل واجهة Kasm بالكامل قبل جلب الرابط
-          echo "Waiting for desktop environment to boot..."
+          # 2. فحص استجابة السيرفر قبل استخراج الرابط
+          echo "Waiting for desktop web interface to respond on port 3000..."
           for i in {1..30}; do
-            if curl -k -s https://127.0.0.1:6901 > /dev/null; then
-              echo "Kasm Desktop is fully ready!"
+            if curl -s http://127.0.0.1:3000 > /dev/null; then
+              echo "Desktop web interface is UP and running!"
               break
             fi
             sleep 2
           done
 
-          # 3. استخراج الرابط وطباعته
+          # 3. استخراج الرابط وإرساله للداشبورد
           GAME_URL=$(grep -o 'https://.*\.trycloudflare\.com' gaming_tunnel.log | head -n 1)
 
           echo "::notice title=RETRO_GAME_URL::$GAME_URL"
