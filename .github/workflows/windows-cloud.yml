@@ -1,49 +1,58 @@
-name: Cloud Windows Lite (Fast & Stable)
+name: Cloud Retro Gaming (RustDesk Fast Desktop)
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-windows:
+  run-desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Cloudflared
+      - name: Install Desktop Environment & Wine
         run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 xfce4-terminal xvfb pulseaudio \
+            wine wine32 winetricks wget curl jq
 
-      - name: Launch Fast Desktop with Wine
+      - name: Install RustDesk
         run: |
-          # تشغيل سطح مكتب خفيف جداً ومجهز بأدوات تشغيل الـ exe فوراً
-          docker run -d \
-            --name=fast-desktop \
-            --privileged \
-            --shm-size=2gb \
-            -p 6080:80 \
-            -e RESOLUTION=1280x720 \
-            dorowu/ubuntu-desktop-lxde-vnc
+          # تنزيل وتثبيت أحدث حزمة deb لـ RustDesk
+          RUSTDESK_DEB="rustdesk.deb"
+          wget -q -O $RUSTDESK_DEB https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.deb || \
+          wget -q -O $RUSTDESK_DEB $(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | jq -r '.assets[] | select(.name | endswith("x86_64.deb")) | .browser_download_url' | head -n 1)
+          sudo dpkg -i --force-depends $RUSTDESK_DEB || sudo apt-get -f install -y
 
-          # تثبيت Wine لفتح ملفات exe بالدبل كليك
-          docker exec fast-desktop bash -c "apt-get update && apt-get install -y wine" &
-
-      - name: Start Cloudflare Tunnel & Verification
+      - name: Start Virtual Display & RustDesk Service
+        env:
+          CUSTOM_PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          cloudflared tunnel --url http://127.0.0.1:6080 --logfile win_tunnel.log &
+          # 1. تشغيل الشاشة الافتراضية بدقة 720p السريعة
+          Xvfb :1 -screen 0 1280x720x24 &
+          export DISPLAY=:1
+          sleep 2
 
-          echo "Waiting for Tunnel to generate URL..."
-          WIN_URL=""
-          for i in {1..30}; do
-            WIN_URL=$(grep -o 'https://.*\.trycloudflare\.com' win_tunnel.log | head -n 1 || true)
-            if [ -n "$WIN_URL" ]; then
-              echo "Tunnel is ready!"
-              break
-            fi
-            sleep 2
-          done
+          # 2. تشغيل واجهة الديسكتوب
+          startxfce4 &
+          sleep 3
 
-          echo "::notice title=WINDOWS_URL::$WIN_URL"
+          # 3. تعيين كلمة المرور لـ RustDesk
+          PASS="${CUSTOM_PASSWORD:-retro12345}"
+          sudo rustdesk --password "$PASS"
+
+          # 4. تشغيل خدمة RustDesk
+          sudo rustdesk --service &
+          sleep 5
+
+          # 5. استخراج الـ ID المخصص للاتصال
+          RUSTDESK_ID=$(rustdesk --get-id)
+
+          echo "::notice title=RUSTDESK_ID::$RUSTDESK_ID"
+          echo "::notice title=RUSTDESK_PASSWORD::$PASS"
 
           echo "================================================="
-          echo "WINDOWS_URL: $WIN_URL"
+          echo "RUSTDESK ID: $RUSTDESK_ID"
+          echo "PASSWORD:    $PASS"
           echo "================================================="
+
+          # إبقاء السيرفر يعمل لمدة 6 ساعات
           sleep 21600
