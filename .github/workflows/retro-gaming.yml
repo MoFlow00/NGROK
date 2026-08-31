@@ -22,7 +22,6 @@ jobs:
           CUSTOM_USER: ${{ secrets.BROWSER_USER }}
           PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          # تشغيل صورة Kasm الرسمية فائقة الاستقرار وتفتح الديسكتوب مباشرة
           docker run -d \
             --name=kasm-desktop \
             --privileged \
@@ -35,10 +34,20 @@ jobs:
 
       - name: Start Cloudflare Tunnel
         run: |
-          # منفذ Kasm الرسمي هو 6901 عبر HTTPS بدون مشاكل شاشة سوداء
-          cloudflared tunnel --no-tls-verify --url https://localhost:6901 --logfile gaming_tunnel.log &
-          sleep 12
+          # 1. تشغيل النفق وتوجيهه صراحة لـ IPv4
+          cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
 
+          # 2. انتظار تشغيل واجهة Kasm بالكامل قبل جلب الرابط
+          echo "Waiting for desktop environment to boot..."
+          for i in {1..30}; do
+            if curl -k -s https://127.0.0.1:6901 > /dev/null; then
+              echo "Kasm Desktop is fully ready!"
+              break
+            fi
+            sleep 2
+          done
+
+          # 3. استخراج الرابط وطباعته
           GAME_URL=$(grep -o 'https://.*\.trycloudflare\.com' gaming_tunnel.log | head -n 1)
 
           echo "::notice title=RETRO_GAME_URL::$GAME_URL"
