@@ -7,6 +7,11 @@ jobs:
   run-desktop:
     runs-on: ubuntu-latest
     steps:
+      - name: Install Cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
       - name: Launch Kasm Gaming Desktop
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
@@ -23,9 +28,9 @@ jobs:
             kasmweb/ubuntu-jammy-desktop:1.15.0
 
           echo "Configuring Gaming Environment & Wine..."
-          sleep 6
+          sleep 5
 
-          # 2. إعداد الصلاحيات، تثبيت Wine، معالجات العرض وأزرار الطوارئ
+          # 2. إعداد الصلاحيات، تثبيت Wine، وأزرار الطوارئ
           docker exec -u 0 kasm-desktop bash -c "
             echo 'ALL ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
             rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list 2>/dev/null || true &&
@@ -33,7 +38,7 @@ jobs:
             apt-get update -y &&
             DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64 p7zip-full xdotool xterm
 
-            # زر طوارئ لإنهاء الألعاب المعلقة
+            # زر طوارئ لإغلاق اللعبة المعلقة
             cat << 'EOF' > /home/kasm-user/Desktop/Kill_All_Games.desktop
           [Desktop Entry]
           Version=1.0
@@ -48,7 +53,7 @@ jobs:
             chmod +x /home/kasm-user/Desktop/Kill_All_Games.desktop
             chown kasm-user:kasm-user /home/kasm-user/Desktop/Kill_All_Games.desktop
 
-            # سكربت تشغيل الألعاب داخل نافذة مستقلة قابلة للتصغير والإغلاق
+            # سكربت تشغيل الألعاب داخل نافذة قابلة للتصغير والإغلاق
             cat << 'EOF' > /usr/local/bin/play-windowed
           #!/bin/bash
           wine explorer /desktop=Game,1024x768 \"\$@\"
@@ -56,18 +61,15 @@ jobs:
             chmod +x /usr/local/bin/play-windowed
           "
 
-      - name: Start Ultra-Stable Secure Tunnel (Pinggy)
+      - name: Start Multi-Protocol Tunnel
         run: |
-          # تشغيل نفق Pinggy المباشر عبر SSH فائق الاستقرار
-          ssh -o StrictHostKeyChecking=no -p 443 -R0:localhost:6901 a.pinggy.io > pinggy.log 2>&1 &
+          # تشغيل النفق مع توجيه مباشر للمخرجات
+          cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 > tunnel.log 2>&1 &
 
-          echo "Waiting for Secure Tunnel URL..."
+          echo "Connecting Tunnel..."
           DESKTOP_URL=""
-          for i in {1..30}; do
-            DESKTOP_URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.pinggy\.link' pinggy.log | head -n 1 || true)
-            if [ -z "$DESKTOP_URL" ]; then
-              DESKTOP_URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.free\.pinggy\.link' pinggy.log | head -n 1 || true)
-            fi
+          for i in {1..60}; do
+            DESKTOP_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | tail -n 1 || true)
             if [ -n "$DESKTOP_URL" ]; then
               echo "Desktop is ready!"
               break
@@ -75,11 +77,13 @@ jobs:
             sleep 2
           done
 
-          echo "::notice title=DESKTOP_URL::$DESKTOP_URL"
-
           echo "================================================="
           echo "DESKTOP_URL: $DESKTOP_URL"
           echo "USERNAME:    kasm_user"
+          echo "PASSWORD:    ${{ secrets.BROWSER_PASSWORD }}"
           echo "================================================="
+
+          # طباعة أسطر التقرير للتأكد
+          cat tunnel.log | grep -E 'trycloudflare|INF|ERR' | head -n 15
 
           sleep 21600
