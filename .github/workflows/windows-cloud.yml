@@ -1,4 +1,4 @@
-name: High-Performance Gaming Desktop (WebRTC & Wine)
+name: Ultralight Gaming & Media Desktop (WebRTC)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Kasm Gaming Desktop
+      - name: Launch Ultralight Gaming Kasm Desktop
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
         run: |
@@ -27,31 +27,108 @@ jobs:
             -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
 
-          echo "Configuring Gaming Environment & Wine..."
+          echo "Setting up Lightweight Gaming Environment & 1-Click Game Downloader..."
           sleep 5
 
-          # 2. إعداد الصلاحيات، تثبيت Wine، وأزرار الطوارئ
+          # 2. تثبيت الحزم الأساسية فقط وبناء واجهة تنزيل الألعاب
           docker exec -u 0 kasm-desktop bash -c "
             echo 'ALL ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers &&
             rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google.list 2>/dev/null || true &&
             dpkg --add-architecture i386 &&
             apt-get update -y &&
-            DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64 p7zip-full xdotool xterm
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              vlc \
+              p7zip-full \
+              unzip \
+              axel \
+              wget \
+              wine \
+              wine32 \
+              wine64 \
+              xdotool \
+              zenity \
+              tint2 \
+              libgl1-mesa-dri \
+              libgl1-mesa-glx
 
-            # زر طوارئ لإغلاق اللعبة المعلقة
-            cat << 'EOF' > /home/kasm-user/Desktop/Kill_All_Games.desktop
+            # إنشاء سكربت تنزيل الألعاب بضغطة زر (One-Click Portable Game Downloader)
+            cat << 'EOF' > /usr/local/bin/game-downloader
+          #!/bin/bash
+          CHOICE=\$(zenity --list --title=\"One-Click Game Downloader\" --text=\"Select a game to download and install instantly:\" --radiolist --column=\"Pick\" --column=\"Game\" \
+            TRUE \"Red Alert 2 & Yuri's Revenge\" \
+            FALSE \"Counter-Strike 1.6 Portable\" \
+            FALSE \"GTA Vice City Portable\" \
+            FALSE \"Custom Direct Link (.zip/.7z)\" --height=320 --width=450)
+
+          if [ -z \"\$CHOICE\" ]; then exit 0; fi
+
+          mkdir -p /home/kasm-user/Desktop/Games
+          cd /home/kasm-user/Desktop/Games
+
+          case \"\$CHOICE\" in
+            \"Red Alert 2 & Yuri's Revenge\")
+              (
+                echo \"10\"; echo \"# Downloading Red Alert 2 (Multi-threaded)...\";
+                axel -n 16 \"https://cdn.kippykip.com/bin/portables/Command%20&%20Conquer%20Red%20Alert%20II%20Portable.zip\" -o ra2.zip
+                echo \"60\"; echo \"# Extracting files...\";
+                unzip -o ra2.zip -d \"/home/kasm-user/Desktop/Games/RedAlert2\"
+                rm -f ra2.zip
+                echo \"85\"; echo \"# Optimizing Graphics & Controls...\";
+                TARGET_DIR=\$(find /home/kasm-user/Desktop/Games/RedAlert2 -type d -name \"*Portable*\" | head -n 1)
+                if [ -z \"\$TARGET_DIR\" ]; then TARGET_DIR=\"/home/kasm-user/Desktop/Games/RedAlert2\"; fi
+                cd \"\$TARGET_DIR\"
+                wget -q -O ddraw.dll https://github.com/FunkyFr3sh/cnc-ddraw/releases/latest/download/ddraw.dll
+                cat << 'INI' > ddraw.ini
+          [ddraw]
+          renderer=gdi
+          fullscreen=false
+          windowed=true
+          width=1024
+          height=768
+          adjmouse=true
+          INI
+                cat << 'DESK' > /home/kasm-user/Desktop/Play_RedAlert2.desktop
           [Desktop Entry]
-          Version=1.0
           Type=Application
-          Name=Force Kill Games
-          Comment=Emergency exit for frozen games
-          Exec=killall -9 wine wine64 wineserver YURI.exe RA2.EXE GAME.EXE
-          Icon=process-stop
+          Name=Play Yuri's Revenge
+          Exec=bash -c 'cd \"$TARGET_DIR\" && WINEDLLOVERRIDES=\"ddraw=n,b\" LIBGL_ALWAYS_SOFTWARE=1 wine \"Yuri'\''s Revenge.exe\"'
+          Icon=applications-games
           Terminal=false
-          Categories=Utility;
+          DESK
+                chmod +x /home/kasm-user/Desktop/Play_RedAlert2.desktop
+                echo \"100\"; echo \"# Installation Complete!\";
+              ) | zenity --progress --title=\"Installing Red Alert 2\" --percentage=0 --auto-close
+              zenity --info --text=\"Red Alert 2 has been installed! Double-click 'Play Yuri's Revenge' on your Desktop to start.\"
+              ;;
+
+            \"Counter-Strike 1.6 Portable\")
+              (
+                echo \"10\"; echo \"# Downloading CS 1.6...\";
+                axel -n 16 \"https://archive.org/download/cs16portable/cs16.zip\" -o cs16.zip || true
+                echo \"60\"; echo \"# Extracting...\";
+                unzip -o cs16.zip -d \"/home/kasm-user/Desktop/Games/CS16\" || true
+                rm -f cs16.zip
+                echo \"100\";
+              ) | zenity --progress --title=\"Installing CS 1.6\" --percentage=0 --auto-close
+              ;;
+
+            \"Custom Direct Link (.zip/.7z)\")
+              LINK=\$(zenity --entry --title=\"Direct Game Link\" --text=\"Paste the direct URL to the .zip or .7z game file:\" --width=500)
+              if [ -n \"\$LINK\" ]; then
+                (
+                  echo \"20\"; echo \"# Downloading...\";
+                  axel -n 16 \"\$LINK\" -o temp_game_file
+                  echo \"70\"; echo \"# Extracting archive...\";
+                  7z x temp_game_file -o/home/kasm-user/Desktop/Games/CustomGame -y
+                  rm -f temp_game_file
+                  echo \"100\"; echo \"# Done!\";
+                ) | zenity --progress --title=\"Downloading Custom Game\" --percentage=0 --auto-close
+                zenity --info --text=\"Game downloaded inside Desktop/Games/CustomGame\"
+              fi
+              ;;
+          esac
           EOF
-            chmod +x /home/kasm-user/Desktop/Kill_All_Games.desktop
-            chown kasm-user:kasm-user /home/kasm-user/Desktop/Kill_All_Games.desktop
+            chmod +x /usr/local/bin/game-downloader
 
             # سكربت تشغيل الألعاب داخل نافذة قابلة للتصغير والإغلاق
             cat << 'EOF' > /usr/local/bin/play-windowed
@@ -59,14 +136,83 @@ jobs:
           wine explorer /desktop=Game,1024x768 \"\$@\"
           EOF
             chmod +x /usr/local/bin/play-windowed
+
+            # إعداد الشريط العلوي العائم
+            mkdir -p /home/kasm-user/.config/tint2
+            cat << 'EOF' > /home/kasm-user/.config/tint2/top-panel.tint2rc
+          panel_items = L
+          panel_position = top right horizontal
+          panel_size = 320 32
+          panel_margin = 10 10
+          panel_padding = 4 4 4
+          panel_background_id = 1
+          wm_menu = 0
+          panel_dock = 0
+          panel_layer = top
+
+          launcher_padding = 4 2
+          launcher_background_id = 0
+          launcher_item_app = /home/kasm-user/Desktop/Game_Downloader.desktop
+          launcher_item_app = /home/kasm-user/Desktop/Show_Desktop.desktop
+          launcher_item_app = /home/kasm-user/Desktop/Terminal.desktop
+          launcher_item_app = /home/kasm-user/Desktop/Kill_All_Games.desktop
+
+          background_color = #1e1e2e 85
+          border_color = #89b4fa 50
+          border_width = 1
+          border_radius = 6
+          EOF
+
+            # اختصارات الأزرار
+            cat << 'EOF' > /home/kasm-user/Desktop/Game_Downloader.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Get Games
+          Exec=game-downloader
+          Icon=package-x-generic
+          Terminal=false
+          EOF
+
+            cat << 'EOF' > /home/kasm-user/Desktop/Show_Desktop.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Desktop
+          Exec=xdotool key Super+d
+          Icon=user-desktop
+          Terminal=false
+          EOF
+
+            cat << 'EOF' > /home/kasm-user/Desktop/Terminal.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Terminal
+          Exec=x-terminal-emulator
+          Icon=utilities-terminal
+          Terminal=false
+          EOF
+
+            cat << 'EOF' > /home/kasm-user/Desktop/Kill_All_Games.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Kill Games
+          Exec=killall -9 wine wine64 wineserver YURI.exe RA2.EXE GAME.EXE
+          Icon=process-stop
+          Terminal=false
+          EOF
+
+            chmod +x /home/kasm-user/Desktop/*.desktop
+            chown -R kasm-user:kasm-user /home/kasm-user/Desktop /home/kasm-user/.config
+
+            # تشغيل الشريط تلقائياً
+            echo 'tint2 -c /home/kasm-user/.config/tint2/top-panel.tint2rc &' >> /dockerstartup/custom_startup.sh
+            tint2 -c /home/kasm-user/.config/tint2/top-panel.tint2rc >/dev/null 2>&1 &
           "
 
       - name: Start Multi-Protocol Tunnel
         run: |
-          # تشغيل النفق مع توجيه مباشر للمخرجات
           cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 > tunnel.log 2>&1 &
 
-          echo "Connecting Tunnel..."
+          echo "Starting Cloudflare Tunnel..."
           DESKTOP_URL=""
           for i in {1..60}; do
             DESKTOP_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' tunnel.log | tail -n 1 || true)
@@ -82,8 +228,5 @@ jobs:
           echo "USERNAME:    kasm_user"
           echo "PASSWORD:    ${{ secrets.BROWSER_PASSWORD }}"
           echo "================================================="
-
-          # طباعة أسطر التقرير للتأكد
-          cat tunnel.log | grep -E 'trycloudflare|INF|ERR' | head -n 15
 
           sleep 21600
