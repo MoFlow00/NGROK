@@ -7,11 +7,6 @@ jobs:
   run-desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Cloudflared
-        run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-
       - name: Launch Kasm Gaming Desktop
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
@@ -27,8 +22,8 @@ jobs:
             -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
 
-          echo "Configuring Gaming Environment & Emergency Shortcuts..."
-          sleep 5
+          echo "Configuring Gaming Environment & Wine..."
+          sleep 6
 
           # 2. إعداد الصلاحيات، تثبيت Wine، معالجات العرض وأزرار الطوارئ
           docker exec -u 0 kasm-desktop bash -c "
@@ -38,7 +33,7 @@ jobs:
             apt-get update -y &&
             DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64 p7zip-full xdotool xterm
 
-            # إنشاء زر طوارئ على سطح المكتب لإنهاء الألعاب المعلقة
+            # زر طوارئ لإنهاء الألعاب المعلقة
             cat << 'EOF' > /home/kasm-user/Desktop/Kill_All_Games.desktop
           [Desktop Entry]
           Version=1.0
@@ -53,7 +48,7 @@ jobs:
             chmod +x /home/kasm-user/Desktop/Kill_All_Games.desktop
             chown kasm-user:kasm-user /home/kasm-user/Desktop/Kill_All_Games.desktop
 
-            # إنشاء سكربت تشغيل آمن داخل نافذة محددة الأبعاد (Virtual Desktop)
+            # سكربت تشغيل الألعاب داخل نافذة مستقلة قابلة للتصغير والإغلاق
             cat << 'EOF' > /usr/local/bin/play-windowed
           #!/bin/bash
           wine explorer /desktop=Game,1024x768 \"\$@\"
@@ -61,14 +56,18 @@ jobs:
             chmod +x /usr/local/bin/play-windowed
           "
 
-      - name: Start Stable Cloudflare Tunnel
+      - name: Start Ultra-Stable Secure Tunnel (Pinggy)
         run: |
-          cloudflared tunnel --protocol http2 --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
+          # تشغيل نفق Pinggy المباشر عبر SSH فائق الاستقرار
+          ssh -o StrictHostKeyChecking=no -p 443 -R0:localhost:6901 a.pinggy.io > pinggy.log 2>&1 &
 
-          echo "Waiting for WebRTC Desktop Tunnel..."
+          echo "Waiting for Secure Tunnel URL..."
           DESKTOP_URL=""
-          for i in {1..40}; do
-            DESKTOP_URL=$(grep -o 'https://.*\.trycloudflare\.com' gaming_tunnel.log | head -n 1 || true)
+          for i in {1..30}; do
+            DESKTOP_URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.pinggy\.link' pinggy.log | head -n 1 || true)
+            if [ -z "$DESKTOP_URL" ]; then
+              DESKTOP_URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.free\.pinggy\.link' pinggy.log | head -n 1 || true)
+            fi
             if [ -n "$DESKTOP_URL" ]; then
               echo "Desktop is ready!"
               break
