@@ -12,7 +12,6 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
 
-          # تثبيت الحزم الناقصة libxdo3 و dbus-x11 لحل أخطاء librustdesk.so
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xfce4 xfce4-terminal xvfb dbus-x11 libxdo3 libxfixes3 libxrandr2 \
             wine wine32 wine64 winetricks wget curl jq
@@ -31,20 +30,20 @@ jobs:
           export DISPLAY=:1
           sleep 2
 
-          # 2. تشغيل واجهة XFCE مع جلسة D-Bus نشطة
+          # 2. تشغيل واجهة XFCE مع جلسة D-Bus
           dbus-launch --exit-with-session startxfce4 &
-          sleep 4
+          sleep 3
 
-          # 3. ضبط كلمة مرور الاتصال
+          # 3. ضبط كلمة المرور بصلاحيات الجذر
           PASS="${CUSTOM_PASSWORD:-retro12345}"
-          rustdesk --password "$PASS"
+          sudo rustdesk --password "$PASS"
 
-          # 4. تشغيل RustDesk داخل نفس جلسة الشاشة
-          rustdesk --service &
-          sleep 6
+          # 4. تشغيل خادم RustDesk في الخلفية مع تسجيل الخادم العام
+          sudo systemctl start rustdesk 2>/dev/null || sudo rustdesk --service &
+          sleep 8
 
-          # 5. استخراج الـ ID الصحيح
-          RUSTDESK_ID=$(rustdesk --get-id || true)
+          # 5. استخراج الـ ID المعتمد
+          RUSTDESK_ID=$(rustdesk --get-id 2>/dev/null || sudo rustdesk --get-id 2>/dev/null || true)
           if [ -z "$RUSTDESK_ID" ]; then
             RUSTDESK_ID=$(grep -oP '(?<=id: ).*' ~/.config/rustdesk/RustDesk.toml 2>/dev/null || grep -oP '(?<=id: ).*' /etc/rustdesk/rustdesk.toml 2>/dev/null || true)
           fi
