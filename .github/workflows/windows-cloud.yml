@@ -1,4 +1,4 @@
-name: Cloud Retro Gaming (RustDesk Fast Desktop)
+name: High-Performance Cloud Desktop (WebRTC Gaming)
 
 on:
   workflow_dispatch:
@@ -7,53 +7,42 @@ jobs:
   run-desktop:
     runs-on: ubuntu-latest
     steps:
-      - name: Enable 32-bit Architecture & Install Dependencies
+      - name: Install Cloudflared
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
 
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            xfce4 xfce4-terminal xvfb dbus-x11 libxdo3 libxfixes3 libxrandr2 \
-            wine wine32 wine64 winetricks wget curl jq
-
-      - name: Install RustDesk
-        run: |
-          wget -q -O rustdesk.deb https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.deb
-          sudo dpkg -i rustdesk.deb || sudo apt-get -f install -y
-
-      - name: Start Virtual Display & RustDesk Service
+      - name: Launch Kasm WebRTC Desktop
         env:
-          CUSTOM_PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
+          VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          # 1. تشغيل الشاشة الافتراضية
-          Xvfb :1 -screen 0 1280x720x24 &
-          export DISPLAY=:1
-          sleep 2
+          # تشغيل سطح مكتب Kasm المخصص للألعاب والبث عالي السرعة
+          docker run -d \
+            --name=kasm-desktop \
+            --privileged \
+            --shm-size=2gb \
+            -p 6901:6901 \
+            -e VNC_PW="${VNC_PW:-retro12345}" \
+            kasmweb/ubuntu-jammy-desktop:1.15.0
 
-          # 2. تشغيل واجهة XFCE مع جلسة D-Bus
-          dbus-launch --exit-with-session startxfce4 &
-          sleep 3
+      - name: Start Cloudflare Tunnel & Verification
+        run: |
+          cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
 
-          # 3. ضبط كلمة المرور بصلاحيات الجذر
-          PASS="${CUSTOM_PASSWORD:-retro12345}"
-          sudo rustdesk --password "$PASS"
+          echo "Waiting for WebRTC Desktop Tunnel..."
+          DESKTOP_URL=""
+          for i in {1..30}; do
+            DESKTOP_URL=$(grep -o 'https://.*\.trycloudflare\.com' gaming_tunnel.log | head -n 1 || true)
+            if [ -n "$DESKTOP_URL" ]; then
+              echo "Desktop is ready!"
+              break
+            fi
+            sleep 2
+          done
 
-          # 4. تشغيل خادم RustDesk في الخلفية مع تسجيل الخادم العام
-          sudo systemctl start rustdesk 2>/dev/null || sudo rustdesk --service &
-          sleep 8
-
-          # 5. استخراج الـ ID المعتمد
-          RUSTDESK_ID=$(rustdesk --get-id 2>/dev/null || sudo rustdesk --get-id 2>/dev/null || true)
-          if [ -z "$RUSTDESK_ID" ]; then
-            RUSTDESK_ID=$(grep -oP '(?<=id: ).*' ~/.config/rustdesk/RustDesk.toml 2>/dev/null || grep -oP '(?<=id: ).*' /etc/rustdesk/rustdesk.toml 2>/dev/null || true)
-          fi
-
-          echo "::notice title=RUSTDESK_ID::$RUSTDESK_ID"
-          echo "::notice title=RUSTDESK_PASSWORD::$PASS"
+          echo "::notice title=DESKTOP_URL::$DESKTOP_URL"
 
           echo "================================================="
-          echo "RUSTDESK ID: $RUSTDESK_ID"
-          echo "PASSWORD:    $PASS"
+          echo "DESKTOP_URL: $DESKTOP_URL"
           echo "================================================="
-
           sleep 21600
