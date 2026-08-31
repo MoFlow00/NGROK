@@ -12,13 +12,13 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Kasm WebRTC Desktop with Wine Pre-installed
+      - name: Launch Kasm WebRTC Desktop
         env:
           VNC_PW: ${{ secrets.BROWSER_PASSWORD }}
         run: |
           PASS="${VNC_PW:-retro12345}"
 
-          # 1. تشغيل حاوية Kasm بكلمة مرور مخصصة للواجهة
+          # 1. تشغيل الحاوية مع تمرير كلمة المرور الرسمية
           docker run -d \
             --name=kasm-desktop \
             --privileged \
@@ -27,21 +27,24 @@ jobs:
             -e VNC_PW="$PASS" \
             kasmweb/ubuntu-jammy-desktop:1.15.0
 
-          # 2. تثبيت Wine وتوحيد كلمة مرور sudo للمستخدم kasm_user
-          docker exec -u 0 kasm-desktop bash -c "
-            echo 'kasm_user:$PASS' | chpasswd &&
-            dpkg --add-architecture i386 &&
-            apt-get update &&
-            DEBIAN_FRONTEND=noninteractive apt-get install -y wine wine32 wine64
-          " &
+          # 2. منح kasm_user صلاحية sudo بدون كلمة سر نهائياً
+          docker exec -u 0 kasm-desktop bash -c "echo 'kasm_user ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers"
 
-      - name: Start Cloudflare Tunnel & Verification
+          # 3. تثبيت Wine في الخلفية بهدوء
+          docker exec -u 0 kasm-desktop bash -c "
+            dpkg --add-architecture i386 &&
+            apt-get update -qq &&
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wine wine32 wine64
+          " >/dev/null 2>&1 &
+
+      - name: Start Stable Cloudflare Tunnel
         run: |
-          cloudflared tunnel --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
+          # استخدام protocol http2 لاستقرار النفق المباشر
+          cloudflared tunnel --protocol http2 --no-tls-verify --url https://127.0.0.1:6901 --logfile gaming_tunnel.log &
 
           echo "Waiting for WebRTC Desktop Tunnel..."
           DESKTOP_URL=""
-          for i in {1..30}; do
+          for i in {1..40}; do
             DESKTOP_URL=$(grep -o 'https://.*\.trycloudflare\.com' gaming_tunnel.log | head -n 1 || true)
             if [ -n "$DESKTOP_URL" ]; then
               echo "Desktop is ready!"
@@ -55,8 +58,6 @@ jobs:
           echo "================================================="
           echo "DESKTOP_URL: $DESKTOP_URL"
           echo "USERNAME:    kasm_user"
-          echo "PASSWORD:    ${{ secrets.BROWSER_PASSWORD }}"
           echo "================================================="
 
-          # إبقاء الجلسة نشطة لمدة 6 ساعات
           sleep 21600
