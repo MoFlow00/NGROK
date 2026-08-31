@@ -36,80 +36,45 @@ jobs:
             -e PASSWORD="$PASSWORD" \
             lscr.io/linuxserver/webtop:ubuntu-xfce
 
-      - name: Install Wine, Winetricks and 32-bit Support
+      - name: Install Wine and 32-bit Support
         run: |
-          docker exec wine-lab bash -lc '
-            dpkg --add-architecture i386
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              wine \
-              wine32 \
-              wine64 \
-              winetricks \
-              cabextract \
-              p7zip-full \
-              unzip \
-              curl \
-              wget \
-              file
-          '
+          docker exec wine-lab bash -lc 'dpkg --add-architecture i386'
+          docker exec wine-lab bash -lc 'apt-get update'
+          docker exec wine-lab bash -lc 'DEBIAN_FRONTEND=noninteractive apt-get install -y wine64 wine32:i386 winetricks cabextract p7zip-full unzip curl wget file'
 
-      - name: Install Chromium in the Desktop
+      - name: Install Chromium
         run: |
-          docker exec -u 1000 -e HOME=/config wine-lab bash -lc '
-            proot-apps install chromium || proot-apps install firefox
-          '
+          docker exec wine-lab bash -lc 'command -v chromium >/dev/null 2>&1 || (apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y chromium)'
 
       - name: Initialize Wine Environment
         run: |
-          docker exec -u 1000 -e HOME=/config wine-lab bash -lc '
-            export DISPLAY=:0
-            export WINEPREFIX=/config/.wine
-            wineboot --init || true
-            mkdir -p /config/Games /config/Downloads
-          '
+          docker exec -u 1000 -e HOME=/config wine-lab bash -lc 'export DISPLAY=:0; export WINEPREFIX=/config/.wine; mkdir -p /config/Games /config/Downloads; wineboot --init'
 
-      - name: Create Wine Lab Info
+      - name: Create Game Launcher Helper
         run: |
-          docker exec wine-lab bash -lc '
-            cat > /config/Downloads/WINE-LAB-README.txt <<'EOF'
-CloudRunner Wine Game Lab
+          docker exec wine-lab bash -lc 'printf "%s\n" "#!/bin/bash" "export DISPLAY=:0" "export WINEPREFIX=/config/.wine" "wine \"$1\"" > /config/wine-run.sh && chmod +x /config/wine-run.sh'
 
-Downloads: /config/Downloads
-Games:     /config/Games
-
-Run a Windows EXE from the terminal:
-  wine /config/Downloads/game.exe
-
-Wine prefix:
-  /config/.wine
-
-Useful commands:
-  winecfg
-  winetricks
-  wineboot --init
-EOF
-          '
+      - name: Create Lab Info
+        run: |
+          docker exec wine-lab bash -lc 'printf "%s\n" "CloudRunner Wine Game Lab" "" "Downloads: /config/Downloads" "Games: /config/Games" "" "Run a Windows EXE:" "wine /config/Downloads/game.exe" "" "Wine prefix: /config/.wine" "" "Tools: winecfg, winetricks, wineboot" > /config/Downloads/WINE-LAB-README.txt'
 
       - name: Start Cloudflare Tunnel
         run: |
           cloudflared tunnel --url http://localhost:3000 --logfile wine_tunnel.log &
-
           for i in {1..30}; do
             WINE_URL=$(grep -o 'https://.*\.trycloudflare\.com' wine_tunnel.log | head -n 1 || true)
             if [ -n "$WINE_URL" ]; then break; fi
             sleep 2
           done
-
+          if [ -z "$WINE_URL" ]; then
+            echo "Cloudflare tunnel URL was not detected."
+            cat wine_tunnel.log || true
+            exit 1
+          fi
           echo "::notice title=WINE_LAB_URL::$WINE_URL"
           echo "================================================="
           echo "WINE LAB: $WINE_URL"
           echo "================================================="
-
-          if [ -z "$WINE_URL" ]; then
-            echo "Cloudflare tunnel URL was not detected. Check wine_tunnel.log."
-            exit 1
-          fi
 
       - name: Keep Session Alive
         run: |
