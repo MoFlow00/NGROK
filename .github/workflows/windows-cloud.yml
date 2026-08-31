@@ -1,4 +1,4 @@
-name: Cloud Windows (Fast Native Desktop)
+name: Cloud Windows Lite (Fast & Stable)
 
 on:
   workflow_dispatch:
@@ -12,31 +12,30 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
 
-      - name: Launch Dockerized Windows KVM
+      - name: Launch Fast Desktop with Wine
         run: |
-          # تشغيل نسخة Tiny10 فائقة الخفة والسرعة والمجهزة مسبقاً
+          # تشغيل سطح مكتب خفيف جداً ومجهز بأدوات تشغيل الـ exe فوراً
           docker run -d \
-            --name=windows-vm \
+            --name=fast-desktop \
             --privileged \
-            -p 8006:8006 \
-            -e VERSION="tiny10" \
-            -e RAM_SIZE="6G" \
-            -e CPU_CORES="2" \
-            -e DISK_SIZE="20G" \
-            --device=/dev/kvm \
-            --cap-add=NET_ADMIN \
-            dockurr/windows
+            --shm-size=2gb \
+            -p 6080:80 \
+            -e RESOLUTION=1280x720 \
+            dorowu/ubuntu-desktop-lxde-vnc
+
+          # تثبيت Wine لفتح ملفات exe بالدبل كليك
+          docker exec fast-desktop bash -c "apt-get update && apt-get install -y wine" &
 
       - name: Start Cloudflare Tunnel & Verification
         run: |
-          cloudflared tunnel --no-tls-verify --url http://127.0.0.1:8006 --logfile win_tunnel.log &
+          cloudflared tunnel --url http://127.0.0.1:6080 --logfile win_tunnel.log &
 
-          echo "Waiting for Windows Tunnel to generate URL..."
+          echo "Waiting for Tunnel to generate URL..."
           WIN_URL=""
           for i in {1..30}; do
             WIN_URL=$(grep -o 'https://.*\.trycloudflare\.com' win_tunnel.log | head -n 1 || true)
             if [ -n "$WIN_URL" ]; then
-              echo "Windows Tunnel is ready!"
+              echo "Tunnel is ready!"
               break
             fi
             sleep 2
