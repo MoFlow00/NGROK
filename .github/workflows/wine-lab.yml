@@ -29,31 +29,33 @@ jobs:
             -v /home/runner/Downloads:/config/Downloads \
             -e SELKIES_BASIC_AUTH_USER="$SELKIES_USER" \
             -e SELKIES_BASIC_AUTH_PASSWORD="$SELKIES_PASSWORD" \
-            -e SELKIES_MODE=webrtc \
-            -e SELKIES_ENABLE_DUAL_MODE=true \
-            -e SELKIES_CONGESTION_CONTROL=true \
-            -e SELKIES_ENCODER=x264enc \
+            -e SELKIES_ENCODER=h264enc \
             -e SELKIES_FRAMERATE=60 \
-            -e SELKIES_H264_CRF=20 \
-            -e SELKIES_H264_STREAMING_MODE=true \
-            -e SELKIES_H264_FULLCOLOR=true \
-            -e SELKIES_USE_PAINT_OVER_QUALITY=true \
+            -e SELKIES_VIDEO_BITRATE=12000 \
+            -e SELKIES_CONGESTION_CONTROL=true \
             ghcr.io/selkies-project/selkies/desktop:main-ubuntu26.04
 
       - name: Wait For Selkies
-        env:
-          SELKIES_USER: ${{ secrets.BROWSER_USER }}
-          SELKIES_PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
         run: |
-          echo "Waiting for Selkies desktop..."
-          for i in {1..90}; do
-            if curl -fsS -u "$SELKIES_USER:$SELKIES_PASSWORD" http://127.0.0.1:8080/ >/dev/null 2>&1; then
-              echo "Selkies is ready"
+          echo "Waiting for Selkies container..."
+          for i in {1..30}; do
+            RUNNING=$(docker inspect -f '{{.State.Running}}' wine-lab 2>/dev/null || echo false)
+            if [ "$RUNNING" = "true" ]; then
+              echo "Selkies container is running"
               break
             fi
             sleep 2
           done
-          curl -fsS -u "$SELKIES_USER:$SELKIES_PASSWORD" http://127.0.0.1:8080/ >/dev/null
+
+          if [ "$(docker inspect -f '{{.State.Running}}' wine-lab 2>/dev/null || echo false)" != "true" ]; then
+            echo "Selkies container failed to stay running"
+            docker logs wine-lab || true
+            exit 1
+          fi
+
+          echo "Giving Selkies time to initialize..."
+          sleep 20
+          docker logs --tail 40 wine-lab || true
 
       - name: Install Wine and Game Tools
         run: |
@@ -86,6 +88,7 @@ jobs:
           done
           if [ -z "$WINE_URL" ]; then
             cat wine_tunnel.log || true
+            docker logs wine-lab || true
             exit 1
           fi
           echo "::notice title=WINE_LAB_URL::$WINE_URL"
