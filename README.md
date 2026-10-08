@@ -1,26 +1,34 @@
 # NGROK Cloud
 
-Simple browser-accessible Linux desktop using GitHub Actions, XFCE4, Google Chrome, KasmVNC and a Cloudflare Quick Tunnel.
+Lightweight browser-accessible Linux desktop.
 
-## Desktop
+## Runtime
 
-- Ubuntu
+- Debian
 - XFCE4
-- Google Chrome
-- 1280x720
-- Lightweight KasmVNC settings
-- No Wine, gaming stack, extra environments or runtime setup scripts
+- Chromium installed
+- TigerVNC + noVNC
+- 1366x768
+- Cloudflare Quick Tunnel
+- One workflow
+- No KasmVNC
+- No Wine
+- No gaming stack
+- No runtime package installation
+- No separate setup scripts
+
+The workflow uses the lightweight `theholm/xfce4-desktop-over-http` image. It is a minimal XFCE4 desktop exposed through noVNC and already includes Chromium. The published image is about 564 MB. citeturn3search0
 
 ## Start
 
 Actions > NGROK Cloud > Run workflow
 
-Choose the session duration.
+Choose only the session duration:
 
-Required repository secret:
+- 1h
+- 3h
+- 6h
 
-- BROWSER_PASSWORD
+The workflow starts the Linux desktop, creates a Cloudflare Quick Tunnel and prints the public URL in the workflow summary.
 
-The workflow starts the Chrome image directly, checks the authenticated KasmVNC service, creates a Cloudflare Quick Tunnel and prints the public URL in the workflow summary.
-
-Kasm's Chrome image includes XFCE4 and Google Chrome, so Chrome is not installed with apt during every run.
+Open the URL to get the full XFCE4 desktop. Chromium is installed inside the desktop and is not opened automatically.
