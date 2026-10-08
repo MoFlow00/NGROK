@@ -49,83 +49,76 @@ jobs:
           # تصدير القيمة الحقيقية للخطوات التالية
           echo "RDP_PASSWORD=$RDP_PASSWORD" >> "$GITHUB_ENV"
 
-      - name: Start Bore TCP tunnel
+      - name: Setup and Start ngrok TCP Tunnel
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
           set -Eeuo pipefail
 
-          RELEASE_JSON="$(curl -fsSL --retry 5 --retry-all-errors \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/ekzhang/bore/releases/latest")"
-
-          BORE_URL="$(jq -r '
-            .assets[]
-            | select(.name | test("x86_64.*unknown-linux-(musl|gnu).*\\.tar\\.gz$"))
-            | .browser_download_url
-          ' <<< "$RELEASE_JSON" | head -n 1)"
-
-          if [[ -z "$BORE_URL" || "$BORE_URL" == "null" ]]; then
-            echo "::error::Could not find an x86_64 Linux Bore release asset."
-            jq -r '.assets[].name' <<< "$RELEASE_JSON"
+          if [[ -z "$NGROK_AUTHTOKEN" ]]; then
+            echo "::error::Missing NGROK_AUTHTOKEN GitHub Secret."
             exit 1
           fi
 
-          echo "Downloading Bore from: $BORE_URL"
-          curl -fsSL --retry 5 --retry-all-errors -o "$HOME/bore.tar.gz" "$BORE_URL"
+          curl -fsSL --retry 5 --retry-all-errors \
+            "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" \
+            -o "$RUNNER_TEMP/ngrok.tgz"
 
-          tar -xzf "$HOME/bore.tar.gz" -C "$HOME"
-          BORE_BIN="$(find "$HOME" -maxdepth 3 -type f -name 'bore' -perm -u+x | head -n 1)"
+          tar -xzf "$RUNNER_TEMP/ngrok.tgz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/ngrok" /usr/local/bin/ngrok
+          rm -f "$RUNNER_TEMP/ngrok.tgz" "$RUNNER_TEMP/ngrok"
 
-          if [[ -z "$BORE_BIN" ]]; then
-            echo "::error::Bore binary was not found after extraction."
-            tar -tzf "$HOME/bore.tar.gz" || true
-            exit 1
-          fi
+          ngrok config add-authtoken "$NGROK_AUTHTOKEN"
+          ngrok version
 
-          chmod +x "$BORE_BIN"
-
-          nohup "$BORE_BIN" local 3389 --to bore.pub > "$HOME/bore-rdp.log" 2>&1 &
-          echo $! > "$HOME/bore-rdp.pid"
+          nohup ngrok tcp 3389 --log=stdout > "$HOME/ngrok-rdp.log" 2>&1 &
+          echo $! > "$HOME/ngrok-rdp.pid"
 
           PUBLIC_ENDPOINT=""
+
           for attempt in {1..30}; do
             sleep 2
 
-            if ! kill -0 "$(cat "$HOME/bore-rdp.pid")" 2>/dev/null; then
-              cat "$HOME/bore-rdp.log" || true
-              echo "::error::Bore tunnel stopped unexpectedly."
+            if ! kill -0 "$(cat "$HOME/ngrok-rdp.pid")" 2>/dev/null; then
+              cat "$HOME/ngrok-rdp.log" || true
+              echo "::error::ngrok stopped unexpectedly."
               exit 1
             fi
 
-            PUBLIC_ENDPOINT="$(grep -Eo 'bore\.pub:[0-9]+' "$HOME/bore-rdp.log" | head -n 1 || true)"
-            if [[ -n "$PUBLIC_ENDPOINT" ]]; then
+            PUBLIC_ENDPOINT="$(
+              curl -fsS --max-time 5 http://127.0.0.1:4040/api/tunnels 2>/dev/null |
+                jq -r '.tunnels[]? | select(.proto=="tcp") | .public_url' |
+                head -n 1 |
+                sed 's#^tcp://##' || true
+            )"
+
+            if [[ -n "$PUBLIC_ENDPOINT" && "$PUBLIC_ENDPOINT" != "null" ]]; then
               break
             fi
           done
 
-          if [[ -z "$PUBLIC_ENDPOINT" ]]; then
-            echo "::error::Bore did not provide a public TCP endpoint."
-            cat "$HOME/bore-rdp.log" || true
+          if [[ -z "$PUBLIC_ENDPOINT" || "$PUBLIC_ENDPOINT" == "null" ]]; then
+            echo "::error::ngrok did not provide a TCP endpoint."
+            cat "$HOME/ngrok-rdp.log" || true
             exit 1
           fi
 
           echo "PUBLIC_ENDPOINT=$PUBLIC_ENDPOINT" >> "$GITHUB_ENV"
 
-          {
-            echo "### BORE CLOUD RDP"
-            echo
-            echo "RDP Host     : $PUBLIC_ENDPOINT"
-            echo "Username     : clouduser"
-            echo "Password     : $RDP_PASSWORD"
-            echo
-            echo "Connect directly with Microsoft Remote Desktop to: $PUBLIC_ENDPOINT"
-          } >> "$GITHUB_STEP_SUMMARY"
-
           echo "========================================"
-          echo "BORE CLOUD RDP IS READY"
+          echo "NGROK CLOUD RDP IS READY"
           echo "RDP Host     : $PUBLIC_ENDPOINT"
           echo "Username     : clouduser"
           echo "Password     : $RDP_PASSWORD"
           echo "========================================"
+
+          {
+            echo "### NGROK CLOUD RDP"
+            echo
+            echo "RDP Host: $PUBLIC_ENDPOINT"
+            echo "Username: clouduser"
+            echo "Password: $RDP_PASSWORD"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify RDP listener
         run: |
