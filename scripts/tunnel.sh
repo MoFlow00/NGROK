@@ -6,9 +6,9 @@ LOG=".runtime/tunnel.log"
 
 rm -f "$LOG"
 
-echo "Starting Cloudflare Quick Tunnel..."
+echo "Starting Cloudflare Quick Tunnel to KasmVNC..."
 
-cloudflared tunnel --no-autoupdate   --url "http://127.0.0.1:$PORT"   >"$LOG" 2>&1 &
+cloudflared tunnel --no-autoupdate   --no-tls-verify   --url "https://127.0.0.1:$PORT"   >"$LOG" 2>&1 &
 
 TUNNEL_PID=$!
 echo "$TUNNEL_PID" > .runtime/tunnel.pid
@@ -16,7 +16,7 @@ echo "$TUNNEL_PID" > .runtime/tunnel.pid
 PUBLIC_URL=""
 
 for attempt in {1..60}; do
-  PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+.trycloudflare.com' "$LOG" | tail -n 1 || true)"
+  PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOG" | tail -n 1 || true)"
 
   if [[ -n "$PUBLIC_URL" ]]; then
     break
@@ -37,12 +37,12 @@ if [[ -z "$PUBLIC_URL" ]]; then
   exit 1
 fi
 
-echo "Verifying authenticated public URL: $PUBLIC_URL"
+echo "Verifying public KasmVNC URL: $PUBLIC_URL"
 
 PUBLIC_READY=false
 
 for attempt in {1..30}; do
-  if curl -fsS       --max-time 10       -u "$BROWSER_USER:$BROWSER_PASSWORD"       "$PUBLIC_URL" >/dev/null 2>&1; then
+  if curl -kfsS --max-time 10 "$PUBLIC_URL/" >/dev/null 2>&1; then
     PUBLIC_READY=true
     break
   fi
@@ -51,27 +51,29 @@ for attempt in {1..30}; do
 done
 
 if [[ "$PUBLIC_READY" != "true" ]]; then
-  echo "::error::Public tunnel URL did not respond successfully."
+  echo "::error::Public KasmVNC URL did not respond successfully."
   cat "$LOG"
   exit 1
 fi
 
 ENVIRONMENT="$(cat .runtime/environment)"
+USERNAME="$(cat .runtime/username)"
 
 cat > .runtime/connection.txt <<EOF
 ========================================
 NGROK CLOUD IS READY
 ========================================
+Technology  : KasmVNC
 Environment : $ENVIRONMENT
 Status      : ONLINE
 
 Public URL  : $PUBLIC_URL
 
-Username    : $BROWSER_USER
+Username    : $USERNAME
 Password    : GitHub Secret
 
 Open the Public URL in your browser.
 ========================================
 EOF
 
-echo "Public tunnel is READY."
+echo "Public KasmVNC tunnel is READY."
