@@ -165,34 +165,57 @@ jobs:
 
           RESOLUTION="${{ inputs.resolution || '1600x900' }}"
 
-          Xvfb :99 -screen 0 "${RESOLUTION}x24" -ac +extension GLX +render -noreset &
-          echo $! > "$HOME/xvfb.pid"
+          # Try display numbers until one works (runner may have :99 taken)
+          DISPLAY_NUM=""
+          for DISP in 99 100 101 102; do
+            Xvfb ":${DISP}" \
+              -screen 0 "${RESOLUTION}x24" \
+              -nolisten tcp \
+              > "$HOME/xvfb.log" 2>&1 &
+            XVFB_PID=$!
+            echo $XVFB_PID > "$HOME/xvfb.pid"
 
-          sleep 2
+            # Wait up to 10s for it to be ready
+            for i in {1..10}; do
+              sleep 1
+              if DISPLAY=":${DISP}" xdpyinfo > /dev/null 2>&1; then
+                DISPLAY_NUM="${DISP}"
+                break 2
+              fi
+              # Check if process died
+              if ! kill -0 $XVFB_PID 2>/dev/null; then
+                break
+              fi
+            done
 
-          # Verify display is up
-          DISPLAY=:99 xdpyinfo > /dev/null 2>&1 || {
-            echo "::error::Xvfb failed to start"
+            # This display didn't work, kill and try next
+            kill $XVFB_PID 2>/dev/null || true
+            sleep 1
+          done
+
+          if [[ -z "$DISPLAY_NUM" ]]; then
+            echo "::error::Xvfb failed to start on any display"
+            cat "$HOME/xvfb.log" || true
             exit 1
-          }
+          fi
 
-          echo "DISPLAY=:99" >> "$GITHUB_ENV"
-          echo "Xvfb running at :99 (${RESOLUTION})"
+          echo "DISPLAY=:${DISPLAY_NUM}" >> "$GITHUB_ENV"
+          echo "DISPLAY_NUM=${DISPLAY_NUM}" >> "$GITHUB_ENV"
+          echo "Xvfb running at :${DISPLAY_NUM} (${RESOLUTION})"
 
       # ────────────────────────────────────────
       # 4. START OPENBOX SESSION
       # ────────────────────────────────────────
       - name: Start Openbox
-        env:
-          DISPLAY: ":99"
         run: |
           set -Eeuo pipefail
 
-          nohup openbox-session > "$HOME/openbox.log" 2>&1 &
+          nohup env DISPLAY="${DISPLAY}" openbox-session \
+            > "$HOME/openbox.log" 2>&1 &
           echo $! > "$HOME/openbox.pid"
 
           sleep 3
-          echo "Openbox started."
+          echo "Openbox started on DISPLAY=${DISPLAY}"
 
       # ────────────────────────────────────────
       # 5. START VNC SERVER
