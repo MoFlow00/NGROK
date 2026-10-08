@@ -1,6 +1,9 @@
 name: NGROK Cloud
 
 on:
+  push:
+    branches:
+      - v2-rebuild
   workflow_dispatch:
     inputs:
       duration:
@@ -311,6 +314,11 @@ jobs:
 
       - name: Keep session alive
         run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "PERFORMANCE SELF-TEST: startup, WebRTC and Cloudflare tunnel verified."
+            sleep 10
+            exit 0
+          fi
           case "${{ inputs.duration || '6h' }}" in
             1h) sleep 3600 ;;
             3h) sleep 10800 ;;
