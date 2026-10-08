@@ -27,12 +27,11 @@ permissions:
 
 jobs:
   cloud:
-    name: Start ${{ inputs.environment }}
+    name: KasmVNC - ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 365
     env:
       ENVIRONMENT: ${{ inputs.environment }}
-      BROWSER_USER: ${{ secrets.BROWSER_USER }}
       BROWSER_PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
 
     steps:
@@ -46,14 +45,14 @@ jobs:
           sudo apt-get install -y curl ca-certificates jq
           chmod +x scripts/*.sh
 
-      - name: Start environment
+      - name: Start KasmVNC environment
         run: ./scripts/start.sh "$ENVIRONMENT"
 
       - name: Install Wine for Wine/Gaming
         if: ${{ inputs.environment == 'wine' || inputs.environment == 'gaming' }}
         run: ./scripts/install-wine.sh
 
-      - name: Verify local service
+      - name: Verify KasmVNC
         run: ./scripts/healthcheck.sh
 
       - name: Install cloudflared
@@ -85,7 +84,8 @@ jobs:
         if: failure()
         run: |
           docker ps -a || true
-          docker logs ngrok-cloud --tail 200 2>/dev/null || true
+          docker inspect ngrok-cloud 2>/dev/null || true
+          docker logs ngrok-cloud --tail 300 2>/dev/null || true
           cat .runtime/tunnel.log 2>/dev/null || true
 
       - name: Cleanup
