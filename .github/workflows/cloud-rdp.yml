@@ -26,8 +26,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends xfce4 xfce4-terminal xrdp xorgxrdp dbus-x11 curl ca-certificates openssl
           sudo useradd -m -s /bin/bash clouduser || true
-          RDP_PASSWORD="$(openssl rand -hex 10)"
-          echo "clouduser:$RDP_PASSWORD" | sudo chpasswd
+          RDP_PASSWORD="\$(openssl rand -hex 10)"
+          echo "clouduser:\$RDP_PASSWORD" | sudo chpasswd
           sudo usermod -aG ssl-cert clouduser
           sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
           #!/bin/sh
@@ -41,79 +41,70 @@ jobs:
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
           systemctl is-active --quiet xrdp
-          curl -fsSL --retry 5 --retry-all-errors -o "$HOME/cloudflared" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-          chmod +x "$HOME/cloudflared"
-          echo "RDP_PASSWORD=$RDP_PASSWORD" >> "$GITHUB_ENV"
+          echo "RDP_PASSWORD=\$RDP_PASSWORD" >> "\$GITHUB_ENV"
 
-      - name: Create temporary Cloudflare RDP tunnel
-        env:
-          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RDP_HOSTNAME: ${{ vars.CLOUDFLARE_RDP_HOSTNAME }}
-          CF_ZONE_ID: ${{ vars.CLOUDFLARE_RDP_ZONE_ID }}
+      - name: Start Bore TCP tunnel
         run: |
           set -Eeuo pipefail
-          if [[ -z "$CF_ACCOUNT_ID" || -z "$CF_API_TOKEN" ]]; then
-            echo "::error::Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN."
+          BORE_VERSION="0.5.2"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o "\$HOME/bore.tar.gz" \
+            "https://github.com/ekzhang/bore/releases/download/v\${BORE_VERSION}/bore-v\${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          tar -xzf "\$HOME/bore.tar.gz" -C "\$HOME"
+          BORE_BIN="\$(find "\$HOME" -maxdepth 2 -type f -name 'bore' -perm -u+x | head -n 1)"
+          if [[ -z "\$BORE_BIN" ]]; then
+            echo "::error::Bore binary was not found after download."
             exit 1
           fi
-          if [[ -z "$RDP_HOSTNAME" || -z "$CF_ZONE_ID" ]]; then
-            echo "::error::Set CLOUDFLARE_RDP_HOSTNAME and CLOUDFLARE_RDP_ZONE_ID repository variables."
-            exit 1
-          fi
-
-          CREATE="$(curl -fsS --retry 5 --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/cfd_tunnel" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" -d '{"name":"NGROK ephemeral RDP","config_src":"cloudflare"}')"
-          if [[ "$(jq -r '.success' <<<"$CREATE")" != "true" ]]; then
-            echo "::error::Cloudflare Tunnel creation failed."
-            jq -c '.errors' <<<"$CREATE" || true
-            exit 1
-          fi
-          TUNNEL_ID="$(jq -r '.result.id' <<<"$CREATE")"
-
-          TOKEN_RESPONSE="$(curl -fsS --retry 5 --retry-all-errors "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/token" -H "Authorization: Bearer $CF_API_TOKEN")"
-          TUNNEL_TOKEN="$(jq -r '.result' <<<"$TOKEN_RESPONSE")"
-
-          CONFIG="$(jq -nc --arg host "$RDP_HOSTNAME" '{"config":{"ingress":[{"hostname":$host,"service":"tcp://127.0.0.1:3389","originRequest":{}},{"service":"http_status:404"}]}}')"
-          CONFIG_RESPONSE="$(curl -fsS --retry 5 --retry-all-errors -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" -d "$CONFIG")"
-          if [[ "$(jq -r '.success' <<<"$CONFIG_RESPONSE")" != "true" ]]; then
-            echo "::error::Cloudflare Tunnel configuration failed."
-            jq -c '.errors' <<<"$CONFIG_RESPONSE" || true
-            exit 1
-          fi
-
-          DNS_RESPONSE="$(curl -fsS --retry 5 --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" -d "$(jq -nc --arg name "$RDP_HOSTNAME" --arg content "$TUNNEL_ID.cfargotunnel.com" '{"type":"CNAME","name":$name,"content":$content,"ttl":1,"proxied":true}')")"
-          if [[ "$(jq -r '.success' <<<"$DNS_RESPONSE")" != "true" ]]; then
-            echo "::error::Cloudflare DNS record creation failed."
-            jq -c '.errors' <<<"$DNS_RESPONSE" || true
-            exit 1
-          fi
-          DNS_RECORD_ID="$(jq -r '.result.id' <<<"$DNS_RESPONSE")"
-          echo "CF_ACCOUNT_ID=$CF_ACCOUNT_ID" >> "$GITHUB_ENV"
-          echo "CF_API_TOKEN=$CF_API_TOKEN" >> "$GITHUB_ENV"
-          echo "RDP_TUNNEL_ID=$TUNNEL_ID" >> "$GITHUB_ENV"
-          echo "RDP_DNS_RECORD_ID=$DNS_RECORD_ID" >> "$GITHUB_ENV"
-          echo "RDP_ZONE_ID=$CF_ZONE_ID" >> "$GITHUB_ENV"
-
-          nohup "$HOME/cloudflared" tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > "$HOME/cloudflared-rdp.log" 2>&1 &
-          echo $! > "$HOME/cloudflared-rdp.pid"
-          for attempt in {1..45}; do
-            if grep -Eqi "registered tunnel connection|connection.*registered" "$HOME/cloudflared-rdp.log" 2>/dev/null; then break; fi
-            if ! kill -0 "$(cat "$HOME/cloudflared-rdp.pid")" 2>/dev/null; then cat "$HOME/cloudflared-rdp.log" || true; exit 1; fi
+          chmod +x "\$BORE_BIN"
+          nohup "\$BORE_BIN" local 3389 --to bore.pub > "\$HOME/bore-rdp.log" 2>&1 &
+          echo \$! > "\$HOME/bore-rdp.pid"
+          PUBLIC_ENDPOINT=""
+          for attempt in {1..30}; do
             sleep 2
+            if ! kill -0 "\$(cat "\$HOME/bore-rdp.pid")" 2>/dev/null; then
+              cat "\$HOME/bore-rdp.log" || true
+              echo "::error::Bore tunnel stopped unexpectedly."
+              exit 1
+            fi
+            PUBLIC_ENDPOINT="\$(grep -Eo 'bore\.pub:[0-9]+' "\$HOME/bore-rdp.log" | head -n 1 || true)"
+            if [[ -n "\$PUBLIC_ENDPOINT" ]]; then break; fi
           done
-          grep -Eqi "registered tunnel connection|connection.*registered" "$HOME/cloudflared-rdp.log"
+          if [[ -z "\$PUBLIC_ENDPOINT" ]]; then
+            echo "::error::Bore did not provide a public TCP endpoint."
+            cat "\$HOME/bore-rdp.log" || true
+            exit 1
+          fi
+          echo "PUBLIC_ENDPOINT=\$PUBLIC_ENDPOINT" >> "\$GITHUB_ENV"
+          {
+            echo "### NGROK CLOUD RDP"
+            echo
+            echo "RDP Host     : \$PUBLIC_ENDPOINT"
+            echo "Username     : clouduser"
+            echo "Password     : \$RDP_PASSWORD"
+            echo
+            echo "Connect directly with Microsoft Remote Desktop to: \$PUBLIC_ENDPOINT"
+          } >> "\$GITHUB_STEP_SUMMARY"
+          echo "========================================"
+          echo "NGROK CLOUD RDP IS READY"
+          echo "RDP Host     : \$PUBLIC_ENDPOINT"
+          echo "Username     : clouduser"
+          echo "Password     : \$RDP_PASSWORD"
+          echo "========================================"
 
-          echo "========================================" | tee /tmp/connection.txt
-          echo "NGROK CLOUD RDP IS READY" | tee -a /tmp/connection.txt
-          echo "Host      : $RDP_HOSTNAME" | tee -a /tmp/connection.txt
-          echo "Username  : clouduser" | tee -a /tmp/connection.txt
-          echo "Password  : $RDP_PASSWORD" | tee -a /tmp/connection.txt
-          echo "Run: cloudflared access tcp --hostname $RDP_HOSTNAME --url localhost:13389" | tee -a /tmp/connection.txt
-          echo "Then connect RDP to localhost:13389" | tee -a /tmp/connection.txt
-          { echo "### NGROK CLOUD RDP"; cat /tmp/connection.txt; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify RDP listener
+        run: |
+          set -Eeuo pipefail
+          sudo ss -lntp | grep ':3389' || {
+            echo "::error::xrdp is not listening on port 3389."
+            exit 1
+          }
+          ps aux | grep -E 'xrdp|Xorg' | grep -v grep || true
+          echo "Bore endpoint: \$PUBLIC_ENDPOINT"
+
       - name: Keep session alive
         run: |
-          case "${{ inputs.duration || '6h' }}" in
+          case "\${{ inputs.duration || '6h' }}" in
             1h) sleep 3600 ;;
             3h) sleep 10800 ;;
             6h) sleep 21600 ;;
@@ -123,14 +114,14 @@ jobs:
       - name: Diagnostics
         if: failure()
         run: |
-          ps aux | grep -E "xfce|xrdp|Xorg|cloudflared" | grep -v grep || true
+          ps aux | grep -E "xfce|xrdp|Xorg|bore" | grep -v grep || true
           sudo journalctl -u xrdp --no-pager -n 100 2>/dev/null || true
-          cat "$HOME/cloudflared-rdp.log" 2>/dev/null || true
+          cat "\$HOME/bore-rdp.log" 2>/dev/null || true
 
       - name: Cleanup
         if: always()
         run: |
+          pkill -f bore >/dev/null 2>&1 || true
           pkill -f xrdp >/dev/null 2>&1 || true
           pkill -f xfce4 >/dev/null 2>&1 || true
           pkill -f Xorg >/dev/null 2>&1 || true
-          pkill -f cloudflared >/dev/null 2>&1 || true
