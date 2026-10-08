@@ -8,7 +8,10 @@ rm -f "$LOG"
 
 echo "Starting Cloudflare Quick Tunnel to KasmVNC..."
 
-cloudflared tunnel --no-autoupdate   --no-tls-verify   --url "https://127.0.0.1:$PORT"   >"$LOG" 2>&1 &
+cloudflared tunnel --no-autoupdate \
+  --no-tls-verify \
+  --url "https://127.0.0.1:$PORT" \
+  >"$LOG" 2>&1 &
 
 TUNNEL_PID=$!
 echo "$TUNNEL_PID" > .runtime/tunnel.pid
@@ -42,7 +45,12 @@ echo "Verifying public KasmVNC URL: $PUBLIC_URL"
 PUBLIC_READY=false
 
 for attempt in {1..30}; do
-  if curl -kfsS --max-time 10 "$PUBLIC_URL/" >/dev/null 2>&1; then
+  STATUS="$(curl -ksS --max-time 10 \
+    -o /dev/null \
+    -w "%{http_code}" \
+    "$PUBLIC_URL/" 2>/dev/null || true)"
+
+  if [[ "$STATUS" =~ ^(200|401)$ ]]; then
     PUBLIC_READY=true
     break
   fi
@@ -51,7 +59,7 @@ for attempt in {1..30}; do
 done
 
 if [[ "$PUBLIC_READY" != "true" ]]; then
-  echo "::error::Public KasmVNC URL did not respond successfully."
+  echo "::error::Public KasmVNC URL did not respond."
   cat "$LOG"
   exit 1
 fi
