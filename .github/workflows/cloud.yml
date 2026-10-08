@@ -18,79 +18,143 @@ permissions:
 
 jobs:
   desktop:
-    name: Lightweight XFCE4 Desktop
+    name: QuickDesk XFCE4
     runs-on: ubuntu-latest
     timeout-minutes: 365
 
     steps:
-      - name: Start Linux Desktop
+      - name: Install QuickDesk desktop stack
         run: |
           set -Eeuo pipefail
-          docker pull theholm/xfce4-desktop-over-http:latest
-          docker rm -f ngrok-cloud >/dev/null 2>&1 || true
-          docker run -d \
-            --name ngrok-cloud \
-            --shm-size=512m \
-            -p 6080:6080 \
-            -e XRES=1366x768x24 \
-            -e TZ=Asia/Dubai \
-            theholm/xfce4-desktop-over-http:latest
 
-          echo "Waiting for XFCE4 desktop..."
-          for attempt in {1..60}; do
-            status="$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/ 2>/dev/null || true)"
-            if [[ "$status" == "200" ]]; then
-              echo "XFCE4 desktop is ready."
-              exit 0
-            fi
-            if ! docker inspect -f '{{.State.Running}}' ngrok-cloud 2>/dev/null | grep -q true; then
-              echo "::error::Desktop container stopped."
-              docker logs ngrok-cloud || true
-              exit 1
-            fi
-            sleep 2
-          done
+          sudo apt-get update -qq
 
-          echo "::error::XFCE4 desktop did not become ready."
-          docker logs ngrok-cloud --tail 200 || true
-          exit 1
+          sudo apt-get install -y --no-install-recommends             xvfb             x11vnc             novnc             websockify             xfce4             xfce4-terminal             dbus-x11             curl             wget             ca-certificates
+
+          curl -fsSL --retry 5 --retry-all-errors             -o "$HOME/cloudflared"             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+
+          chmod +x "$HOME/cloudflared"
+
+      - name: Start QuickDesk
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$HOME/.quickdesk/logs"
+
+          RES="1280x720x24"
+          VNC_PORT="5900"
+          WEB_PORT="6080"
+
+          pkill -f "Xvfb :1" >/dev/null 2>&1 || true
+          pkill -f xfce4 >/dev/null 2>&1 || true
+          pkill -f startxfce4 >/dev/null 2>&1 || true
+          pkill -f x11vnc >/dev/null 2>&1 || true
+          pkill -f websockify >/dev/null 2>&1 || true
+          pkill -f cloudflared >/dev/null 2>&1 || true
+
+          Xvfb :1 -screen 0 "$RES"             -nolisten tcp             > "$HOME/.quickdesk/logs/xvfb.log" 2>&1 &
+
+          sleep 2
+
+          DISPLAY=:1 dbus-launch startxfce4             > "$HOME/.quickdesk/logs/xfce.log" 2>&1 &
+
+          sleep 4
+
+          export DISPLAY=:1
+
+          xfconf-query -c xfwm4 -p /general/use_compositing -s false 2>/dev/null || true
+          xfconf-query -c xfwm4 -p /general/vblank_mode -s off 2>/dev/null || true
+
+          x11vnc             -display :1             -rfbport "$VNC_PORT"             -listen 127.0.0.1             -forever             -shared             -noxdamage             -ncache 10             -ncache_cr             -speeds lan             -quiet             > "$HOME/.quickdesk/logs/x11vnc.log" 2>&1 &
+
+          sleep 2
+
+          websockify             --web=/usr/share/novnc             "$WEB_PORT"             "127.0.0.1:$VNC_PORT"             > "$HOME/.quickdesk/logs/websockify.log" 2>&1 &
+
+          sleep 2
+
+          if ! pgrep -f "Xvfb :1" >/dev/null; then
+            echo "::error::Xvfb failed."
+            cat "$HOME/.quickdesk/logs/xvfb.log" || true
+            exit 1
+          fi
+
+          if ! pgrep -f "startxfce4" >/dev/null; then
+            echo "::error::XFCE4 failed."
+            cat "$HOME/.quickdesk/logs/xfce.log" || true
+            exit 1
+          fi
+
+          if ! pgrep -f "x11vnc" >/dev/null; then
+            echo "::error::x11vnc failed."
+            cat "$HOME/.quickdesk/logs/x11vnc.log" || true
+            exit 1
+          fi
+
+          if ! pgrep -f "websockify" >/dev/null; then
+            echo "::error::noVNC failed."
+            cat "$HOME/.quickdesk/logs/websockify.log" || true
+            exit 1
+          fi
+
+          status="$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/vnc.html || true)"
+
+          if [[ "$status" != "200" ]]; then
+            echo "::error::noVNC is not ready."
+            cat "$HOME/.quickdesk/logs/websockify.log" || true
+            exit 1
+          fi
+
+          echo "QuickDesk desktop is ready."
 
       - name: Start Cloudflare Quick Tunnel
         run: |
           set -Eeuo pipefail
-          curl -fsSL --retry 5 --retry-all-errors -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i /tmp/cloudflared.deb
 
-          cloudflared tunnel --no-autoupdate --url http://127.0.0.1:6080 > /tmp/cloudflared.log 2>&1 &
-          echo $! > /tmp/cloudflared.pid
+          "$HOME/cloudflared" tunnel             --no-autoupdate             --url http://127.0.0.1:6080             > "$HOME/.quickdesk/logs/cloudflared.log" 2>&1 &
+
+          echo $! > "$HOME/.quickdesk/cloudflared.pid"
 
           PUBLIC_URL=""
+
           for attempt in {1..60}; do
-            PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/cloudflared.log | tail -n 1 || true)"
-            if [[ -n "$PUBLIC_URL" ]]; then break; fi
-            if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then
+            PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com'               "$HOME/.quickdesk/logs/cloudflared.log" | tail -n 1 || true)"
+
+            if [[ -n "$PUBLIC_URL" ]]; then
+              break
+            fi
+
+            if ! kill -0 "$(cat "$HOME/.quickdesk/cloudflared.pid")" 2>/dev/null; then
               echo "::error::Cloudflare Tunnel stopped."
-              cat /tmp/cloudflared.log || true
+              cat "$HOME/.quickdesk/logs/cloudflared.log" || true
               exit 1
             fi
+
             sleep 2
           done
 
           [[ -n "$PUBLIC_URL" ]] || {
             echo "::error::Cloudflare public URL was not created."
-            cat /tmp/cloudflared.log || true
+            cat "$HOME/.quickdesk/logs/cloudflared.log" || true
             exit 1
           }
 
+          PUBLIC_URL="$PUBLIC_URL/vnc.html"
+
+          status="000"
           for attempt in {1..30}; do
-            status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "$PUBLIC_URL/" 2>/dev/null || true)"
-            if [[ "$status" == "200" ]]; then break; fi
+            status="$(curl -sS --max-time 10               -o /dev/null               -w "%{http_code}"               "$PUBLIC_URL" 2>/dev/null || true)"
+
+            if [[ "$status" == "200" ]]; then
+              break
+            fi
+
             sleep 2
           done
 
           if [[ "$status" != "200" ]]; then
-            echo "::error::Public desktop did not respond."
-            cat /tmp/cloudflared.log || true
+            echo "::error::Public QuickDesk URL did not respond."
+            cat "$HOME/.quickdesk/logs/cloudflared.log" || true
             exit 1
           fi
 
@@ -98,11 +162,11 @@ jobs:
             echo "========================================"
             echo "NGROK CLOUD IS READY"
             echo "========================================"
-            echo "Linux       : Debian"
+            echo "Project     : QuickDesk"
+            echo "Linux       : Ubuntu"
             echo "Desktop     : XFCE4"
-            echo "Browser     : Chromium installed"
-            echo "Resolution  : 1366x768"
-            echo "Display     : noVNC"
+            echo "Display     : Xvfb + x11vnc + noVNC"
+            echo "Resolution  : 1280x720"
             echo "Status      : ONLINE"
             echo
             echo "Public URL  : $PUBLIC_URL"
@@ -128,14 +192,19 @@ jobs:
       - name: Diagnostics
         if: failure()
         run: |
-          docker ps -a || true
-          docker logs ngrok-cloud --tail 300 2>/dev/null || true
-          cat /tmp/cloudflared.log 2>/dev/null || true
+          ps aux | grep -E 'Xvfb|xfce|x11vnc|websockify|cloudflared' | grep -v grep || true
+          cat "$HOME/.quickdesk/logs/xvfb.log" 2>/dev/null || true
+          cat "$HOME/.quickdesk/logs/xfce.log" 2>/dev/null || true
+          cat "$HOME/.quickdesk/logs/x11vnc.log" 2>/dev/null || true
+          cat "$HOME/.quickdesk/logs/websockify.log" 2>/dev/null || true
+          cat "$HOME/.quickdesk/logs/cloudflared.log" 2>/dev/null || true
 
       - name: Cleanup
         if: always()
         run: |
-          docker rm -f ngrok-cloud >/dev/null 2>&1 || true
-          if [[ -f /tmp/cloudflared.pid ]]; then
-            kill "$(cat /tmp/cloudflared.pid)" 2>/dev/null || true
-          fi
+          pkill -f "Xvfb :1" >/dev/null 2>&1 || true
+          pkill -f xfce4 >/dev/null 2>&1 || true
+          pkill -f startxfce4 >/dev/null 2>&1 || true
+          pkill -f x11vnc >/dev/null 2>&1 || true
+          pkill -f websockify >/dev/null 2>&1 || true
+          pkill -f cloudflared >/dev/null 2>&1 || true
