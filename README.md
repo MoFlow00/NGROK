@@ -1,34 +1,35 @@
 # NGROK Cloud
 
-Lightweight browser-accessible Linux desktop.
+Lightweight browser-accessible Linux desktop based on the QuickDesk architecture.
 
 ## Runtime
 
-- Debian
+- Ubuntu GitHub runner
 - XFCE4
-- Chromium installed
-- TigerVNC + noVNC
-- 1366x768
+- Xvfb
+- x11vnc
+- noVNC
+- websockify
 - Cloudflare Quick Tunnel
-- One workflow
+- 1280x720
+- XFCE compositor disabled
 - No KasmVNC
 - No Wine
 - No gaming stack
-- No runtime package installation
-- No separate setup scripts
+- No heavy desktop image
 
-The workflow uses the lightweight `theholm/xfce4-desktop-over-http` image. It is a minimal XFCE4 desktop exposed through noVNC and already includes Chromium. The published image is about 564 MB. citeturn3search0
+The architecture follows QuickDesk: Xvfb -> XFCE4 -> x11vnc -> noVNC/websockify -> Cloudflare Tunnel. QuickDesk documents this same stack as its lightweight remote desktop design. citeturn0search0
 
 ## Start
 
 Actions > NGROK Cloud > Run workflow
 
-Choose only the session duration:
+Choose only:
 
 - 1h
 - 3h
 - 6h
 
-The workflow starts the Linux desktop, creates a Cloudflare Quick Tunnel and prints the public URL in the workflow summary.
+The workflow installs only the packages needed for the desktop stack, starts XFCE4 on a virtual display, disables XFCE compositing, exposes it through noVNC and creates a Cloudflare Quick Tunnel.
 
-Open the URL to get the full XFCE4 desktop. Chromium is installed inside the desktop and is not opened automatically.
+The public URL opens the full Linux XFCE4 desktop. Chromium is not auto-started.
