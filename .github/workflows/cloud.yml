@@ -1,9 +1,6 @@
 name: NGROK Cloud
 
 on:
-  push:
-    branches:
-      - v2-rebuild
   workflow_dispatch:
     inputs:
       duration:
@@ -19,9 +16,22 @@ on:
 permissions:
   contents: read
 
+env:
+  # WebRTC performance profile for the GitHub-hosted CPU runner.
+  SELKIES_ENCODER: h264enc
+  SELKIES_FRAMERATE: "60"
+  SELKIES_VIDEO_BITRATE: "8000"
+  SELKIES_AUDIO_BITRATE: "128000"
+  SELKIES_VIDEO_FULLCOLOR: "false"
+  SELKIES_USE_PAINT_OVER_QUALITY: "false"
+  SELKIES_VIDEO_STREAMING_MODE: "true"
+  SELKIES_SECOND_SCREEN: "false"
+  SELKIES_GAMEPAD_ENABLED: "false"
+  SELKIES_MICROPHONE_ENABLED: "false"
+  SELKIES_ENABLE_BINARY_CLIPBOARD: "false"
+
 jobs:
   desktop:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[self-test]')
     name: Selkies XFCE4 WebRTC
     runs-on: ubuntu-latest
     timeout-minutes: 365
@@ -140,6 +150,18 @@ jobs:
 
           rm -rf "$HOME/.config/xfce4"
 
+          mkdir -p "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
+          cat > "$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfwm4" version="1.0">
+            <property name="general" type="empty">
+              <property name="use_compositing" type="bool" value="false"/>
+              <property name="show_dock_shadow" type="bool" value="false"/>
+              <property name="show_frame_shadow" type="bool" value="false"/>
+            </property>
+          </channel>
+          EOF
+
           nohup selkies-session \
             --session=xfce \
             --public \
@@ -149,8 +171,6 @@ jobs:
             --enable-cloudflare-turn=true \
             --cloudflare-turn-token-id="$TURN_KEY_ID" \
             --cloudflare-turn-api-token="$CF_API_TOKEN" \
-            --encoder=h264enc \
-            --use-cpu=true \
             --enable-resize=true \
             --basic-auth-user=ubuntu \
             --basic-auth-password="$PASSWORD" \
@@ -189,6 +209,10 @@ jobs:
           {
             echo "SELKIES_PASSWORD=$PASSWORD"
           } >> "$GITHUB_ENV"
+
+          if ! grep -q "server running" "$HOME/.selkies/logs/selkies.log"; then
+            echo "::warning::Selkies HTTP readiness passed, but startup log marker was not found."
+          fi
 
           echo "Selkies WebRTC desktop is ready."
 
@@ -287,7 +311,7 @@ jobs:
 
       - name: Keep session alive
         run: |
-          case "${{ inputs.duration || '1h' }}" in
+          case "${{ inputs.duration || '6h' }}" in
             1h) sleep 3600 ;;
             3h) sleep 10800 ;;
             6h) sleep 21600 ;;
