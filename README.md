@@ -1,17 +1,25 @@
 # NGROK Cloud
 
-Temporary browser-accessible Linux environments using GitHub Actions and Cloudflare Quick Tunnels.
+Browser-accessible Linux environments using GitHub Actions, KasmVNC and Cloudflare Quick Tunnels.
 
 Environments:
-- Desktop: XFCE Linux desktop.
-- Browser: Chromium.
-- Wine: XFCE with Wine and common utilities.
-- Gaming: XFCE with Wine and game utilities.
+- Desktop: Ubuntu desktop with KasmVNC.
+- Browser: Chromium with KasmVNC.
+- Wine: Ubuntu desktop with Wine and common utilities.
+- Gaming: Ubuntu desktop with Wine and game utilities.
 
-Start from Actions > NGROK Cloud > Run workflow. Choose the environment and session duration. The workflow prints a verified public URL.
+The project no longer uses Selkies or LinuxServer webtop/chromium.
 
-Required repository secrets:
-- BROWSER_USER
+Start:
+Actions > NGROK Cloud > Run workflow
+
+Choose:
+- Environment
+- Session duration
+
+Required repository secret:
 - BROWSER_PASSWORD
 
-Sessions run on temporary GitHub-hosted runners. Public tunnel URLs change between sessions.
+KasmVNC uses HTTPS on port 6901. The workflow creates a Cloudflare Quick Tunnel to that service and verifies the public URL before showing it.
+
+KasmVNC standalone images use the fixed Kasm Workspaces 1.19.0 release. The browser and desktop images are published by Kasm Technologies. Kasm's standalone documentation uses port 6901 and the kasm_user account.
