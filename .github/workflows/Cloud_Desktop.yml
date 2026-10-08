@@ -56,7 +56,7 @@ jobs:
             xterm \
             feh \
             python3-websockify \
-            python3 python3-pip python3-venv \
+            python3 python3-pip python3-venv netcat-openbsd \
             nodejs npm \
             git curl wget ca-certificates jq openssl \
             build-essential unzip
@@ -221,15 +221,14 @@ jobs:
       # 5. START VNC SERVER
       # ────────────────────────────────────────
       - name: Start x11vnc
-        env:
-          DISPLAY: ":99"
         run: |
           set -Eeuo pipefail
 
-          VNC_PASS="$(openssl rand -hex 6)"
+          # x11vnc passwords are limited to 8 characters.
+          VNC_PASS="$(openssl rand -hex 4)"
 
           nohup x11vnc \
-            -display :99 \
+            -display "${DISPLAY}" \
             -passwd "${VNC_PASS}" \
             -rfbport 5900 \
             -forever \
@@ -243,13 +242,21 @@ jobs:
           echo $! > "$HOME/x11vnc.pid"
 
           # Wait for VNC to be ready
+          VNC_READY=false
           for i in {1..20}; do
             if nc -z 127.0.0.1 5900 2>/dev/null; then
-              echo "x11vnc ready on port 5900"
+              VNC_READY=true
+              echo "x11vnc ready on port 5900 (DISPLAY=${DISPLAY})"
               break
             fi
             sleep 1
           done
+
+          if [[ "$VNC_READY" != "true" ]]; then
+            echo "::error::x11vnc did not become ready on port 5900."
+            cat "$HOME/x11vnc.log" || true
+            exit 1
+          fi
 
           echo "VNC_PASS=${VNC_PASS}" >> "$GITHUB_ENV"
 
@@ -269,13 +276,21 @@ jobs:
           echo $! > "$HOME/novnc.pid"
 
           # Wait for noVNC HTTP to be ready
+          NOVNC_READY=false
           for i in {1..20}; do
             if curl -fsS -o /dev/null http://127.0.0.1:6080/vnc.html 2>/dev/null; then
+              NOVNC_READY=true
               echo "noVNC ready on port 6080"
               break
             fi
             sleep 1
           done
+
+          if [[ "$NOVNC_READY" != "true" ]]; then
+            echo "::error::noVNC did not become ready on port 6080."
+            cat "$HOME/novnc.log" || true
+            exit 1
+          fi
 
       # ────────────────────────────────────────
       # 7. CLOUDFLARE TUNNEL
@@ -309,12 +324,24 @@ jobs:
           }
 
           # Verify tunnel is reachable
+          TUNNEL_READY=false
           for i in {1..15}; do
             STATUS="$(curl -s -o /dev/null -w "%{http_code}" \
               --max-time 10 "$PUBLIC_URL/vnc.html" || true)"
-            [[ "$STATUS" == "200" ]] && break
+            if [[ "$STATUS" == "200" ]]; then
+              TUNNEL_READY=true
+              echo "Cloudflare tunnel is reachable (HTTP $STATUS)"
+              break
+            fi
             sleep 3
           done
+
+          if [[ "$TUNNEL_READY" != "true" ]]; then
+            echo "::error::Cloudflare tunnel was created but public HTTP verification failed."
+            echo "Last HTTP status: ${STATUS:-unknown}"
+            cat "$HOME/cloudflared.log" || true
+            exit 1
+          fi
 
           # ── Direct autoconnect URL ─────────────
           CONNECT_URL="${PUBLIC_URL}/vnc.html?autoconnect=true&resize=scale&password=${VNC_PASS}"
