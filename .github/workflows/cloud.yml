@@ -178,8 +178,106 @@ jobs:
           PUBLIC_URL=""
 
           for attempt in {1..60}; do
-            PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\\.trycloudflare\\.com' \
-              "$HOME/.selkies/logs/cloudflared.log" | tail -n 1 || true)"
+            # cloudflared can emit the Quick Tunnel URL with terminal formatting or
+            # as a markdown-style link. Strip formatting first, then extract only
+            # the hostname so the readiness check is not dependent on log styling.
+            CLEAN_LOG="$(sed -E 
+
+          [[ -n "$PUBLIC_URL" ]] || {
+            echo "::error::Cloudflare public URL was not created."
+            cat "$HOME/.selkies/logs/cloudflared.log" || true
+            exit 1
+          }
+
+          status="000"
+
+          for attempt in {1..30}; do
+            status="$(curl -sS \
+              -u "ubuntu:$SELKIES_PASSWORD" \
+              --max-time 10 \
+              -o /dev/null \
+              -w "%{http_code}" \
+              "$PUBLIC_URL/" 2>/dev/null || true)"
+
+            if [[ "$status" == "200" ]]; then
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Public Selkies URL did not respond."
+            cat "$HOME/.selkies/logs/cloudflared.log" || true
+            exit 1
+          fi
+
+          {
+            echo "========================================"
+            echo "NGROK CLOUD IS READY"
+            echo "========================================"
+            echo "Project     : Selkies"
+            echo "Linux       : Ubuntu"
+            echo "Desktop     : XFCE4"
+            echo "Transport   : WebRTC"
+            echo "Media Relay : Cloudflare Calls TURN"
+            echo "Encoder     : H.264 software"
+            echo "Resolution  : Dynamic / browser fitted"
+            echo "Status      : ONLINE"
+            echo
+            echo "Public URL  : $PUBLIC_URL/"
+            echo "Username    : ubuntu"
+            echo "Password    : $SELKIES_PASSWORD"
+            echo
+            echo "Open the URL. WebRTC is the default transport."
+            echo "WebSocket fallback is available from the Selkies menu."
+            echo "========================================"
+          } | tee /tmp/connection.txt
+
+          {
+            echo "### NGROK CLOUD"
+            cat /tmp/connection.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep session alive
+        run: |
+          case "${{ inputs.duration }}" in
+            1h) sleep 3600 ;;
+            3h) sleep 10800 ;;
+            6h) sleep 21600 ;;
+            *) echo "::error::Invalid duration"; exit 1 ;;
+          esac
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          ps aux | grep -E 'selkies|xfce|Xvfb|pulseaudio|cloudflared' | grep -v grep || true
+          cat "$HOME/.selkies/logs/selkies.log" 2>/dev/null || true
+          cat "$HOME/.selkies/logs/cloudflared.log" 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [[ -n "${TURN_KEY_ID:-}" && -n "${CF_ACCOUNT_ID:-}" && -n "${CF_API_TOKEN:-}" ]]; then
+            curl -fsS --retry 3 \
+              -X DELETE \
+              "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/calls/turn_keys/${TURN_KEY_ID}" \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -o /dev/null || true
+          fi
+
+          pkill -f selkies-session >/dev/null 2>&1 || true
+          pkill -f selkies >/dev/null 2>&1 || true
+          pkill -f xfce4 >/dev/null 2>&1 || true
+          pkill -f Xvfb >/dev/null 2>&1 || true
+          pkill -f pulseaudio >/dev/null 2>&1 || true
+          pkill -f cloudflared >/dev/null 2>&1 || true
+s/\\x1B\\[[0-9;?]*[ -/]*[@-~]//g' \
+              "$HOME/.selkies/logs/cloudflared.log" 2>/dev/null || true)"
+
+            PUBLIC_URL="$(printf '%s\\n' "$CLEAN_LOG" \
+              | grep -aEo 'https://[A-Za-z0-9.-]+\\.trycloudflare\\.com' \
+              | tail -n 1 || true)"
 
             if [[ -n "$PUBLIC_URL" ]]; then
               break
