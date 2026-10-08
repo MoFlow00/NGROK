@@ -52,11 +52,27 @@ jobs:
 
           # Selkies 2.0.0 uses the old Cloudflare TURN credential endpoint.
           # Cloudflare now serves this endpoint as /generate-ice-servers.
-          # Patch the installed module so WebRTC TURN works with the current API.
-          SELKIES_ICE_CONFIG="$(python3 -c 'import pathlib, selkies.webrtc_ice_config as m; print(pathlib.Path(m.__file__))')"
+          # Find the installed module directly. The release package does not
+          # expose the Selkies Python package through the runner's system Python.
+          SELKIES_ICE_CONFIG="$(sudo find /usr /opt -type f -name 'webrtc_ice_config.py' -path '*/selkies/*' 2>/dev/null | head -n 1)"
+          
+          if [[ -z "$SELKIES_ICE_CONFIG" ]]; then
+            echo "::error::Selkies webrtc_ice_config.py was not found after installation."
+            dpkg -L "selkies-$SELKIES_VERSION" | grep -E 'webrtc_ice_config.py|selkies' | head -50 || true
+            exit 1
+          fi
+          
+          echo "Patching Selkies ICE module: $SELKIES_ICE_CONFIG"
           sudo sed -i \
             's#https://rtc.live.cloudflare.com/v1/turn/keys/{turn_token_id}/credentials/generate"#https://rtc.live.cloudflare.com/v1/turn/keys/{turn_token_id}/credentials/generate-ice-servers"#' \
             "$SELKIES_ICE_CONFIG"
+          
+          if ! sudo grep -q 'credentials/generate-ice-servers' "$SELKIES_ICE_CONFIG"; then
+            echo "::error::Cloudflare TURN endpoint patch was not applied."
+            exit 1
+          fi
+          
+          echo "Selkies Cloudflare TURN endpoint patched successfully."
 
           curl -fsSL --retry 5 --retry-all-errors \
             -o "$HOME/cloudflared" \
