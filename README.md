@@ -18,7 +18,7 @@ Lightweight browser-accessible Linux desktop based on the QuickDesk architecture
 - No gaming stack
 - No heavy desktop image
 
-The architecture follows QuickDesk: Xvfb -> XFCE4 -> x11vnc -> noVNC/websockify -> Cloudflare Tunnel. QuickDesk documents this same stack as its lightweight remote desktop design. citeturn0search0
+The architecture follows QuickDesk: Xvfb -> XFCE4 -> x11vnc -> noVNC/websockify -> Cloudflare Tunnel. QuickDesk documents this same stack as its lightweight remote desktop design.
 
 ## Start
 
