@@ -13,6 +13,9 @@ name: ☁️ Cloud Desktop
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
+  push:
+    branches:
+      - v2-rebuild
   workflow_dispatch:
     inputs:
       duration:
@@ -399,6 +402,12 @@ jobs:
       # ────────────────────────────────────────
       - name: Keep session alive (${{ inputs.duration || '3h' }})
         run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "Self-test run: startup and public tunnel verified."
+            sleep 10
+            exit 0
+          fi
+
           case "${{ inputs.duration || '3h' }}" in
             1h) sleep 3600  ;;
             3h) sleep 10800 ;;
