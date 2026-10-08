@@ -1,0 +1,104 @@
+name: NGROK Cloud RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Session duration"
+        required: true
+        type: choice
+        options: ["1h", "3h", "6h"]
+        default: "6h"
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: XFCE4 RDP
+    runs-on: ubuntu-latest
+    timeout-minutes: 365
+
+    steps:
+      - name: Install lightweight XFCE4 + RDP
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xfce4 xfce4-terminal xrdp xorgxrdp dbus-x11 curl ca-certificates openssl
+          sudo useradd -m -s /bin/bash clouduser || true
+          RDP_PASSWORD="$(openssl rand -hex 10)"
+          echo "clouduser:$RDP_PASSWORD" | sudo chpasswd
+          sudo usermod -aG ssl-cert clouduser
+          sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
+          #!/bin/sh
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_SESSION_DESKTOP=xfce
+          export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg
+          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share
+          exec dbus-run-session -- startxfce4
+          EOF
+          sudo chmod +x /etc/xrdp/startwm.sh
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+          systemctl is-active --quiet xrdp
+          curl -fsSL --retry 5 --retry-all-errors -o "$HOME/cloudflared" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+          chmod +x "$HOME/cloudflared"
+          echo "RDP_PASSWORD=$RDP_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Start Cloudflare RDP tunnel
+        env:
+          RDP_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_RDP_TUNNEL_TOKEN }}
+          RDP_HOSTNAME: ${{ vars.CLOUDFLARE_RDP_HOSTNAME }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -z "$RDP_TUNNEL_TOKEN" || -z "$RDP_HOSTNAME" ]]; then
+            echo "::error::Set CLOUDFLARE_RDP_TUNNEL_TOKEN secret and CLOUDFLARE_RDP_HOSTNAME variable first."
+            echo "::error::Cloudflare route must target rdp://localhost:3389."
+            exit 1
+          fi
+          "$HOME/cloudflared" tunnel --no-autoupdate run --token "$RDP_TUNNEL_TOKEN" > "$HOME/cloudflared-rdp.log" 2>&1 &
+          echo $! > "$HOME/cloudflared-rdp.pid"
+          for attempt in {1..30}; do
+            if grep -Eqi "registered tunnel connection|connection.*registered" "$HOME/cloudflared-rdp.log" 2>/dev/null; then break; fi
+            if ! kill -0 "$(cat "$HOME/cloudflared-rdp.pid")" 2>/dev/null; then cat "$HOME/cloudflared-rdp.log" || true; exit 1; fi
+            sleep 2
+          done
+          {
+            echo "========================================"
+            echo "NGROK CLOUD RDP IS READY"
+            echo "========================================"
+            echo "Transport : RDP"
+            echo "Host      : $RDP_HOSTNAME"
+            echo "Username  : clouduser"
+            echo "Password  : $RDP_PASSWORD"
+            echo
+            echo "On your device run:"
+            echo "cloudflared access tcp --hostname $RDP_HOSTNAME --url localhost:13389"
+            echo "Then connect your RDP client to localhost:13389"
+            echo "========================================"
+          } | tee /tmp/connection.txt
+          { echo "### NGROK CLOUD RDP"; cat /tmp/connection.txt; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep session alive
+        run: |
+          case "${{ inputs.duration || '6h' }}" in
+            1h) sleep 3600 ;;
+            3h) sleep 10800 ;;
+            6h) sleep 21600 ;;
+            *) echo "::error::Invalid duration"; exit 1 ;;
+          esac
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          ps aux | grep -E "xfce|xrdp|Xorg|cloudflared" | grep -v grep || true
+          sudo journalctl -u xrdp --no-pager -n 100 2>/dev/null || true
+          cat "$HOME/cloudflared-rdp.log" 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f xrdp >/dev/null 2>&1 || true
+          pkill -f xfce4 >/dev/null 2>&1 || true
+          pkill -f Xorg >/dev/null 2>&1 || true
+          pkill -f cloudflared >/dev/null 2>&1 || true
