@@ -1,0 +1,74 @@
+name: NGROK Cloud
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to start"
+        required: true
+        type: choice
+        options: [desktop, browser, wine, gaming]
+        default: desktop
+      duration:
+        description: "Session duration"
+        required: true
+        type: choice
+        options: ["1h", "3h", "6h"]
+        default: "6h"
+
+permissions:
+  contents: read
+
+jobs:
+  cloud:
+    name: Start ${{ inputs.environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 365
+    env:
+      ENVIRONMENT: ${{ inputs.environment
+      BROWSER_USER: ${{ secrets.BROWSER_USER
+      BROWSER_PASSWORD: ${{ secrets.BROWSER_PASSWORD
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare runner
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates jq
+          chmod +x scripts/*.sh
+      - name: Start environment
+        run: ./scripts/start.sh "$ENVIRONMENT"
+      - name: Install Wine for Wine/Gaming
+        if: ${{ inputs.environment == 'wine' || ${{ inputs.environment == 'gaming'
+        run: ./scripts/install-wine.sh
+      - name: Verify local service
+        run: ./scripts/healthcheck.sh
+      - name: Install cloudflared
+        run: |
+          set -Eeuo pipefail
+          curl -fsSL --retry 5 --retry-all-errors -o /tmp/cloudflared.deb             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+      - name: Start public tunnel
+        run: ./scripts/tunnel.sh
+      - name: Show connection information
+        run: |
+          cat .runtime/connection.txt
+          echo "### NGROK CLOUD" >> "$GITHUB_STEP_SUMMARY"
+          cat .runtime/connection.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep session alive
+        run: |
+          case "${{ inputs.duration" in
+            1h) SECONDS=3600 ;;
+            3h) SECONDS=10800 ;;
+            6h) SECONDS=21600 ;;
+            *) echo "Invalid duration"; exit 1 ;;
+          esac
+          sleep "$SECONDS"
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker logs ngrok-cloud --tail 200 2>/dev/null || true
+          cat .runtime/tunnel.log 2>/dev/null || true
+      - name: Cleanup
+        if: always()
+        run: ./scripts/cleanup.sh
