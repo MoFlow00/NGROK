@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   desktop:
-    name: XFCE4 RDP
+    name: XFCE4 RDP via ngrok TCP
     runs-on: ubuntu-latest
     timeout-minutes: 365
 
@@ -24,12 +24,10 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xfce4 xfce4-terminal xrdp xorgxrdp dbus-x11 curl ca-certificates openssl
+          sudo apt-get install -y --no-install-recommends xfce4 xfce4-terminal xrdp xorgxrdp dbus-x11 curl ca-certificates openssl jq
           sudo useradd -m -s /bin/bash clouduser || true
-          
-          # توليد كلمة المرور وتعيينها
-          RDP_PASSWORD="$(openssl rand -hex 10)"
-          echo "clouduser:$RDP_PASSWORD" | sudo chpasswd
+          RDP_PASSWORD="\$(openssl rand -hex 10)"
+          echo "clouduser:\$RDP_PASSWORD" | sudo chpasswd
           sudo usermod -aG ssl-cert clouduser
 
           sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
@@ -40,99 +38,103 @@ jobs:
           export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share
           exec dbus-run-session -- startxfce4
           EOF
-          sudo chmod +x /etc/xrdp/startwm.sh
 
+          sudo chmod +x /etc/xrdp/startwm.sh
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
-          systemctl is-active --quiet xrdp
 
-          # تصدير القيمة الحقيقية للخطوات التالية
-          echo "RDP_PASSWORD=$RDP_PASSWORD" >> "$GITHUB_ENV"
+          for i in {1..15}; do
+            if sudo ss -lntp | grep -q ':3389'; then break; fi
+            sleep 1
+          done
+
+          if ! sudo ss -lntp | grep -q ':3389'; then
+            echo "::error::XRDP is not listening on port 3389."
+            sudo journalctl -u xrdp --no-pager -n 100 || true
+            exit 1
+          fi
+
+          echo "RDP_PASSWORD=\$RDP_PASSWORD" >> "\$GITHUB_ENV"
 
       - name: Setup and Start ngrok TCP Tunnel
         env:
-          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+          NGROK_AUTHTOKEN: \${{ secrets.NGROK_AUTHTOKEN }}
         run: |
           set -Eeuo pipefail
 
-          if [[ -z "$NGROK_AUTHTOKEN" ]]; then
+          if [[ -z "\$NGROK_AUTHTOKEN" ]]; then
             echo "::error::Missing NGROK_AUTHTOKEN GitHub Secret."
             exit 1
           fi
 
+          NGROK_VERSION="3.29.0"
           curl -fsSL --retry 5 --retry-all-errors \
-            "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" \
-            -o "$RUNNER_TEMP/ngrok.tgz"
+            -o /tmp/ngrok.tgz \
+            "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v\${NGROK_VERSION}-stable-linux-amd64.tgz"
 
-          tar -xzf "$RUNNER_TEMP/ngrok.tgz" -C "$RUNNER_TEMP"
-          sudo install -m 0755 "$RUNNER_TEMP/ngrok" /usr/local/bin/ngrok
-          rm -f "$RUNNER_TEMP/ngrok.tgz" "$RUNNER_TEMP/ngrok"
+          tar -xzf /tmp/ngrok.tgz -C /tmp
+          sudo install -m 0755 /tmp/ngrok /usr/local/bin/ngrok
+          rm -f /tmp/ngrok /tmp/ngrok.tgz
 
-          ngrok config add-authtoken "$NGROK_AUTHTOKEN"
           ngrok version
+          ngrok config add-authtoken "\$NGROK_AUTHTOKEN"
 
-          nohup ngrok tcp 3389 --log=stdout > "$HOME/ngrok-rdp.log" 2>&1 &
-          echo $! > "$HOME/ngrok-rdp.pid"
+          nohup ngrok tcp 3389 --log=stdout > "\$HOME/ngrok-rdp.log" 2>&1 &
+          echo \$! > "\$HOME/ngrok-rdp.pid"
 
           PUBLIC_ENDPOINT=""
 
           for attempt in {1..30}; do
             sleep 2
 
-            if ! kill -0 "$(cat "$HOME/ngrok-rdp.pid")" 2>/dev/null; then
-              cat "$HOME/ngrok-rdp.log" || true
+            if ! kill -0 "\$(cat "\$HOME/ngrok-rdp.pid")" 2>/dev/null; then
+              cat "\$HOME/ngrok-rdp.log" || true
               echo "::error::ngrok stopped unexpectedly."
               exit 1
             fi
 
-            PUBLIC_ENDPOINT="$(
-              curl -fsS --max-time 5 http://127.0.0.1:4040/api/tunnels 2>/dev/null |
-                jq -r '.tunnels[]? | select(.proto=="tcp") | .public_url' |
-                head -n 1 |
-                sed 's#^tcp://##' || true
-            )"
+            PUBLIC_ENDPOINT="\$(curl -fsS --max-time 5 http://127.0.0.1:4040/api/tunnels 2>/dev/null | jq -r '.tunnels[]? | select(.proto=="tcp") | .public_url' | head -n 1 | sed 's#^tcp://##' || true)"
 
-            if [[ -n "$PUBLIC_ENDPOINT" && "$PUBLIC_ENDPOINT" != "null" ]]; then
-              break
-            fi
+            if [[ -n "\$PUBLIC_ENDPOINT" && "\$PUBLIC_ENDPOINT" != "null" ]]; then break; fi
           done
 
-          if [[ -z "$PUBLIC_ENDPOINT" || "$PUBLIC_ENDPOINT" == "null" ]]; then
+          if [[ -z "\$PUBLIC_ENDPOINT" || "\$PUBLIC_ENDPOINT" == "null" ]]; then
             echo "::error::ngrok did not provide a TCP endpoint."
-            cat "$HOME/ngrok-rdp.log" || true
+            cat "\$HOME/ngrok-rdp.log" || true
             exit 1
           fi
 
-          echo "PUBLIC_ENDPOINT=$PUBLIC_ENDPOINT" >> "$GITHUB_ENV"
+          echo "PUBLIC_ENDPOINT=\$PUBLIC_ENDPOINT" >> "\$GITHUB_ENV"
 
           echo "========================================"
           echo "NGROK CLOUD RDP IS READY"
-          echo "RDP Host     : $PUBLIC_ENDPOINT"
+          echo "RDP Host     : \$PUBLIC_ENDPOINT"
           echo "Username     : clouduser"
-          echo "Password     : $RDP_PASSWORD"
+          echo "Password     : \$RDP_PASSWORD"
           echo "========================================"
 
           {
             echo "### NGROK CLOUD RDP"
             echo
-            echo "RDP Host: $PUBLIC_ENDPOINT"
-            echo "Username: clouduser"
-            echo "Password: $RDP_PASSWORD"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "**RDP Host:** \`\$PUBLIC_ENDPOINT\`"
+            echo
+            echo "**Username:** \`clouduser\`"
+            echo
+            echo "**Password:** \`\$RDP_PASSWORD\`"
+            echo
+            echo "Use Microsoft Remote Desktop with the host and port above."
+          } >> "\$GITHUB_STEP_SUMMARY"
 
-      - name: Verify RDP listener
+      - name: Verify RDP and Tunnel
         run: |
           set -Eeuo pipefail
-          sudo ss -lntp | grep ':3389' || {
-            echo "::error::xrdp is not listening on port 3389."
-            exit 1
-          }
-          ps aux | grep -E 'xrdp|Xorg' | grep -v grep || true
-          echo "ngrok endpoint: $PUBLIC_ENDPOINT"
+          sudo ss -lntp | grep ':3389'
+          curl -fsS http://127.0.0.1:4040/api/tunnels | jq .
+          echo "Endpoint: \$PUBLIC_ENDPOINT"
 
       - name: Keep session alive
         run: |
-          case "${{ inputs.duration || '6h' }}" in
+          case "\${{ inputs.duration || '6h' }}" in
             1h) sleep 3600 ;;
             3h) sleep 10800 ;;
             6h) sleep 21600 ;;
@@ -144,12 +146,13 @@ jobs:
         run: |
           ps aux | grep -E "xfce|xrdp|Xorg|ngrok" | grep -v grep || true
           sudo journalctl -u xrdp --no-pager -n 100 2>/dev/null || true
-          cat "$HOME/ngrok-rdp.log" 2>/dev/null || true
+          cat "\$HOME/ngrok-rdp.log" 2>/dev/null || true
+          sudo ss -lntp || true
 
       - name: Cleanup
         if: always()
         run: |
           pkill -f ngrok >/dev/null 2>&1 || true
-          pkill -f xrdp >/dev/null 2>&1 || true
+          sudo systemctl stop xrdp >/dev/null 2>&1 || true
           pkill -f xfce4 >/dev/null 2>&1 || true
           pkill -f Xorg >/dev/null 2>&1 || true
