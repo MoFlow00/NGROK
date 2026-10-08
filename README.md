@@ -1,35 +1,52 @@
 # NGROK Cloud
 
-Lightweight browser-accessible Linux desktop based on the QuickDesk architecture.
+Lightweight browser-accessible Linux XFCE4 desktop using Selkies.
+
+## Architecture
+
+Ubuntu GitHub Runner
+-> XFCE4
+-> Selkies
+-> H.264 encoded desktop stream
+-> Browser
+-> Cloudflare Quick Tunnel
+
+Selkies is designed as a low-latency HTML5 remote desktop and supports hardware or software video encoding. This workflow uses its H.264 software encoder because GitHub-hosted runners do not provide a dedicated GPU for this session. citeturn0search0turn1search2
+
+## Why Selkies
+
+The previous QuickDesk setup used Xvfb + x11vnc + noVNC. That sends the desktop through a traditional VNC framebuffer path.
+
+Selkies encodes the desktop as video and renders it in the browser using its HTML5 client. Its virtual-display resize mode also lets the desktop follow the browser window instead of staying locked to one fixed resolution. citeturn3search0
 
 ## Runtime
 
-- Ubuntu GitHub runner
+- Ubuntu GitHub Runner
 - XFCE4
-- Xvfb
-- x11vnc
-- noVNC
-- websockify
+- Selkies 2.0.0
+- H.264 software encoding
+- Selkies WebSocket transport
+- Dynamic browser-fit resolution
 - Cloudflare Quick Tunnel
-- 1280x720
-- XFCE compositor disabled
 - No KasmVNC
+- No x11vnc
+- No noVNC
 - No Wine
 - No gaming stack
 - No heavy desktop image
-
-The architecture follows QuickDesk: Xvfb -> XFCE4 -> x11vnc -> noVNC/websockify -> Cloudflare Tunnel. QuickDesk documents this same stack as its lightweight remote desktop design.
 
 ## Start
 
 Actions > NGROK Cloud > Run workflow
 
-Choose only:
+Choose:
 
 - 1h
 - 3h
 - 6h
 
-The workflow installs only the packages needed for the desktop stack, starts XFCE4 on a virtual display, disables XFCE compositing, exposes it through noVNC and creates a Cloudflare Quick Tunnel.
+The workflow generates a temporary Selkies password for every session and prints the URL and credentials in the workflow summary.
 
-The public URL opens the full Linux XFCE4 desktop. Chromium is not auto-started.
+## Important
+
+Selkies WebRTC mode is not used in this GitHub Actions + Cloudflare Quick Tunnel setup because WebRTC may require UDP/TURN connectivity through restrictive firewalls. Selkies WebSocket mode keeps the deployment on one TCP port while still using encoded video instead of VNC framebuffer updates. citeturn3search0
