@@ -50,6 +50,19 @@ jobs:
 
           sudo apt-get install -y "/tmp/${PKG}"
 
+          # Selkies 2.0.0 uses the old Cloudflare TURN credential endpoint.
+          # Cloudflare now serves this endpoint as /generate-ice-servers.
+          # Patch the installed module so WebRTC TURN works with the current API.
+          SELKIES_ICE_CONFIG="$(python3 - <<'PY'
+import pathlib
+import selkies.webrtc_ice_config as m
+print(pathlib.Path(m.__file__))
+PY
+)"
+          sudo sed -i \
+            's#https://rtc.live.cloudflare.com/v1/turn/keys/{turn_token_id}/credentials/generate"#https://rtc.live.cloudflare.com/v1/turn/keys/{turn_token_id}/credentials/generate-ice-servers"#' \
+            "$SELKIES_ICE_CONFIG"
+
           curl -fsSL --retry 5 --retry-all-errors \
             -o "$HOME/cloudflared" \
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
@@ -185,7 +198,7 @@ jobs:
               "$HOME/.selkies/logs/cloudflared.log" 2>/dev/null || true)"
 
             PUBLIC_URL="$(printf '%s\\n' "$CLEAN_LOG" \
-              | grep -aEo 'https://[A-Za-z0-9.-]+\\.trycloudflare\\.com' \
+              | grep -aEo 'https://[A-Za-z0-9.-]+\.trycloudflare\.com' \
               | tail -n 1 || true)"
 
             if [[ -n "$PUBLIC_URL" ]]; then
