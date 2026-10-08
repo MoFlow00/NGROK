@@ -46,7 +46,7 @@ jobs:
       - name: Start Bore TCP tunnel
         run: |
           set -Eeuo pipefail
-          BORE_VERSION="0.5.2"
+          BORE_VERSION="0.6.0"
           curl -fsSL --retry 5 --retry-all-errors \
             -o "\$HOME/bore.tar.gz" \
             "https://github.com/ekzhang/bore/releases/download/v\${BORE_VERSION}/bore-v\${BORE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
