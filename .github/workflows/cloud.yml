@@ -18,115 +18,98 @@ permissions:
 
 jobs:
   desktop:
-    name: QuickDesk XFCE4
+    name: Selkies XFCE4
     runs-on: ubuntu-latest
     timeout-minutes: 365
 
     steps:
-      - name: Install QuickDesk desktop stack
+      - name: Install lightweight desktop
         run: |
           set -Eeuo pipefail
 
           sudo apt-get update -qq
 
-          sudo apt-get install -y --no-install-recommends             xvfb             x11vnc             novnc             websockify             xfce4             xfce4-terminal             dbus-x11             curl             wget             ca-certificates
+          sudo apt-get install -y --no-install-recommends             xfce4             xfce4-terminal             curl             ca-certificates             pulseaudio
+
+          SELKIES_VERSION="2.0.0"
+
+          . /etc/os-release
+          DISTRO="${ID}${VERSION_ID}"
+          ARCH="$(dpkg --print-architecture)"
+          PKG="selkies-${SELKIES_VERSION}-${DISTRO}-${ARCH}.deb"
+
+          curl -fsSL --retry 5 --retry-all-errors             -o "/tmp/${PKG}"             "https://github.com/selkies-project/selkies/releases/download/${SELKIES_VERSION}/${PKG}"
+
+          sudo apt-get install -y "/tmp/${PKG}"
 
           curl -fsSL --retry 5 --retry-all-errors             -o "$HOME/cloudflared"             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
 
           chmod +x "$HOME/cloudflared"
 
-      - name: Start QuickDesk
+          selkies --help >/dev/null
+          selkies-session --help >/dev/null
+
+      - name: Start Selkies desktop
         run: |
           set -Eeuo pipefail
 
-          mkdir -p "$HOME/.quickdesk/logs"
+          mkdir -p "$HOME/.selkies/logs"
 
-          RES="1280x720x24"
-          VNC_PORT="5900"
-          WEB_PORT="6080"
+          PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)"
+          echo "$PASSWORD" > "$HOME/.selkies/password"
 
-          pkill -f "Xvfb :1" >/dev/null 2>&1 || true
-          pkill -f xfce4 >/dev/null 2>&1 || true
-          pkill -f startxfce4 >/dev/null 2>&1 || true
-          pkill -f x11vnc >/dev/null 2>&1 || true
-          pkill -f websockify >/dev/null 2>&1 || true
-          pkill -f cloudflared >/dev/null 2>&1 || true
+          rm -rf "$HOME/.config/xfce4"
 
-          Xvfb :1 -screen 0 "$RES"             -nolisten tcp             > "$HOME/.quickdesk/logs/xvfb.log" 2>&1 &
+          nohup selkies-session             --session=xfce             --public             --port=8080             --mode=websockets             --encoder=h264enc             --use-cpu=true             --enable-resize=true             --basic-auth-user=ubuntu             --basic-auth-password="$PASSWORD"             > "$HOME/.selkies/logs/selkies.log" 2>&1 &
 
-          sleep 2
+          echo $! > "$HOME/.selkies/selkies.pid"
 
-          DISPLAY=:1 dbus-run-session -- xfce4-session             > "$HOME/.quickdesk/logs/xfce.log" 2>&1 &
+          for attempt in {1..60}; do
+            if curl -fsS               -u "ubuntu:$PASSWORD"               --max-time 5               -o /dev/null               http://127.0.0.1:8080/; then
+              break
+            fi
 
-          sleep 4
+            if ! kill -0 "$(cat "$HOME/.selkies/selkies.pid")" 2>/dev/null; then
+              echo "::error::Selkies stopped."
+              cat "$HOME/.selkies/logs/selkies.log" || true
+              exit 1
+            fi
 
-          export DISPLAY=:1
+            sleep 2
+          done
 
-          xfconf-query -c xfwm4 -p /general/use_compositing -s false 2>/dev/null || true
-          xfconf-query -c xfwm4 -p /general/vblank_mode -s off 2>/dev/null || true
-
-          x11vnc             -display :1             -rfbport "$VNC_PORT"             -listen 127.0.0.1             -forever             -shared             -noxdamage             -ncache 10             -ncache_cr             -speeds lan             -quiet             > "$HOME/.quickdesk/logs/x11vnc.log" 2>&1 &
-
-          sleep 2
-
-          websockify             --web=/usr/share/novnc             "$WEB_PORT"             "127.0.0.1:$VNC_PORT"             > "$HOME/.quickdesk/logs/websockify.log" 2>&1 &
-
-          sleep 2
-
-          if ! pgrep -f "Xvfb :1" >/dev/null; then
-            echo "::error::Xvfb failed."
-            cat "$HOME/.quickdesk/logs/xvfb.log" || true
+          if ! curl -fsS             -u "ubuntu:$PASSWORD"             --max-time 5             -o /dev/null             http://127.0.0.1:8080/; then
+            echo "::error::Selkies did not become ready."
+            cat "$HOME/.selkies/logs/selkies.log" || true
             exit 1
           fi
 
-          if ! pgrep -f "xfce4-session" >/dev/null; then
-            echo "::error::XFCE4 session failed."
-            cat "$HOME/.quickdesk/logs/xfce.log" || true
-            exit 1
-          fi
+          {
+            echo "SELKIES_PASSWORD=$PASSWORD"
+          } >> "$GITHUB_ENV"
 
-          if ! pgrep -f "x11vnc" >/dev/null; then
-            echo "::error::x11vnc failed."
-            cat "$HOME/.quickdesk/logs/x11vnc.log" || true
-            exit 1
-          fi
-
-          if ! pgrep -f "websockify" >/dev/null; then
-            echo "::error::noVNC failed."
-            cat "$HOME/.quickdesk/logs/websockify.log" || true
-            exit 1
-          fi
-
-          status="$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/vnc.html || true)"
-
-          if [[ "$status" != "200" ]]; then
-            echo "::error::noVNC is not ready."
-            cat "$HOME/.quickdesk/logs/websockify.log" || true
-            exit 1
-          fi
-
-          echo "QuickDesk desktop is ready."
+          echo "Selkies desktop is ready."
 
       - name: Start Cloudflare Quick Tunnel
         run: |
           set -Eeuo pipefail
 
-          "$HOME/cloudflared" tunnel             --no-autoupdate             --url http://127.0.0.1:6080             > "$HOME/.quickdesk/logs/cloudflared.log" 2>&1 &
+          "$HOME/cloudflared" tunnel             --no-autoupdate             --url http://127.0.0.1:8080             > "$HOME/.selkies/logs/cloudflared.log" 2>&1 &
 
-          echo $! > "$HOME/.quickdesk/cloudflared.pid"
+          echo $! > "$HOME/.selkies/cloudflared.pid"
 
           PUBLIC_URL=""
 
           for attempt in {1..60}; do
-            PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com'               "$HOME/.quickdesk/logs/cloudflared.log" | tail -n 1 || true)"
+            PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com'               "$HOME/.selkies/logs/cloudflared.log" | tail -n 1 || true)"
 
             if [[ -n "$PUBLIC_URL" ]]; then
               break
             fi
 
-            if ! kill -0 "$(cat "$HOME/.quickdesk/cloudflared.pid")" 2>/dev/null; then
+            if ! kill -0 "$(cat "$HOME/.selkies/cloudflared.pid")" 2>/dev/null; then
               echo "::error::Cloudflare Tunnel stopped."
-              cat "$HOME/.quickdesk/logs/cloudflared.log" || true
+              cat "$HOME/.selkies/logs/cloudflared.log" || true
               exit 1
             fi
 
@@ -135,15 +118,14 @@ jobs:
 
           [[ -n "$PUBLIC_URL" ]] || {
             echo "::error::Cloudflare public URL was not created."
-            cat "$HOME/.quickdesk/logs/cloudflared.log" || true
+            cat "$HOME/.selkies/logs/cloudflared.log" || true
             exit 1
           }
 
-          PUBLIC_URL="$PUBLIC_URL/vnc.html"
-
           status="000"
+
           for attempt in {1..30}; do
-            status="$(curl -sS --max-time 10               -o /dev/null               -w "%{http_code}"               "$PUBLIC_URL" 2>/dev/null || true)"
+            status="$(curl -sS               -u "ubuntu:$SELKIES_PASSWORD"               --max-time 10               -o /dev/null               -w "%{http_code}"               "$PUBLIC_URL/" 2>/dev/null || true)"
 
             if [[ "$status" == "200" ]]; then
               break
@@ -153,8 +135,8 @@ jobs:
           done
 
           if [[ "$status" != "200" ]]; then
-            echo "::error::Public QuickDesk URL did not respond."
-            cat "$HOME/.quickdesk/logs/cloudflared.log" || true
+            echo "::error::Public Selkies URL did not respond."
+            cat "$HOME/.selkies/logs/cloudflared.log" || true
             exit 1
           fi
 
@@ -162,16 +144,19 @@ jobs:
             echo "========================================"
             echo "NGROK CLOUD IS READY"
             echo "========================================"
-            echo "Project     : QuickDesk"
+            echo "Project     : Selkies"
             echo "Linux       : Ubuntu"
             echo "Desktop     : XFCE4"
-            echo "Display     : Xvfb + x11vnc + noVNC"
-            echo "Resolution  : 1280x720"
+            echo "Transport   : Selkies WebSocket"
+            echo "Encoder     : H.264 software"
+            echo "Resolution  : Dynamic / browser fitted"
             echo "Status      : ONLINE"
             echo
-            echo "Public URL  : $PUBLIC_URL"
+            echo "Public URL  : $PUBLIC_URL/"
+            echo "Username    : ubuntu"
+            echo "Password    : $SELKIES_PASSWORD"
             echo
-            echo "Open the URL to use the full Linux desktop."
+            echo "Open the URL and use the fullscreen button."
             echo "========================================"
           } | tee /tmp/connection.txt
 
@@ -192,19 +177,16 @@ jobs:
       - name: Diagnostics
         if: failure()
         run: |
-          ps aux | grep -E 'Xvfb|xfce|x11vnc|websockify|cloudflared' | grep -v grep || true
-          cat "$HOME/.quickdesk/logs/xvfb.log" 2>/dev/null || true
-          cat "$HOME/.quickdesk/logs/xfce.log" 2>/dev/null || true
-          cat "$HOME/.quickdesk/logs/x11vnc.log" 2>/dev/null || true
-          cat "$HOME/.quickdesk/logs/websockify.log" 2>/dev/null || true
-          cat "$HOME/.quickdesk/logs/cloudflared.log" 2>/dev/null || true
+          ps aux | grep -E 'selkies|xfce|Xvfb|pulseaudio|cloudflared' | grep -v grep || true
+          cat "$HOME/.selkies/logs/selkies.log" 2>/dev/null || true
+          cat "$HOME/.selkies/logs/cloudflared.log" 2>/dev/null || true
 
       - name: Cleanup
         if: always()
         run: |
-          pkill -f "Xvfb :1" >/dev/null 2>&1 || true
+          pkill -f selkies-session >/dev/null 2>&1 || true
+          pkill -f selkies >/dev/null 2>&1 || true
           pkill -f xfce4 >/dev/null 2>&1 || true
-          pkill -f startxfce4 >/dev/null 2>&1 || true
-          pkill -f x11vnc >/dev/null 2>&1 || true
-          pkill -f websockify >/dev/null 2>&1 || true
+          pkill -f Xvfb >/dev/null 2>&1 || true
+          pkill -f pulseaudio >/dev/null 2>&1 || true
           pkill -f cloudflared >/dev/null 2>&1 || true
