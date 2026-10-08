@@ -128,7 +128,7 @@ jobs:
             exit 1
           }
           ps aux | grep -E 'xrdp|Xorg' | grep -v grep || true
-          echo "Bore endpoint: $PUBLIC_ENDPOINT"
+          echo "ngrok endpoint: $PUBLIC_ENDPOINT"
 
       - name: Keep session alive
         run: |
@@ -142,14 +142,14 @@ jobs:
       - name: Diagnostics
         if: failure()
         run: |
-          ps aux | grep -E "xfce|xrdp|Xorg|bore" | grep -v grep || true
+          ps aux | grep -E "xfce|xrdp|Xorg|ngrok" | grep -v grep || true
           sudo journalctl -u xrdp --no-pager -n 100 2>/dev/null || true
-          cat "$HOME/bore-rdp.log" 2>/dev/null || true
+          cat "$HOME/ngrok-rdp.log" 2>/dev/null || true
 
       - name: Cleanup
         if: always()
         run: |
-          pkill -f bore >/dev/null 2>&1 || true
+          pkill -f ngrok >/dev/null 2>&1 || true
           pkill -f xrdp >/dev/null 2>&1 || true
           pkill -f xfce4 >/dev/null 2>&1 || true
           pkill -f Xorg >/dev/null 2>&1 || true
