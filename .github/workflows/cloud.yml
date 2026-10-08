@@ -53,12 +53,7 @@ jobs:
           # Selkies 2.0.0 uses the old Cloudflare TURN credential endpoint.
           # Cloudflare now serves this endpoint as /generate-ice-servers.
           # Patch the installed module so WebRTC TURN works with the current API.
-          SELKIES_ICE_CONFIG="$(python3 - <<'PY'
-import pathlib
-import selkies.webrtc_ice_config as m
-print(pathlib.Path(m.__file__))
-PY
-)"
+          SELKIES_ICE_CONFIG="$(python3 -c 'import pathlib, selkies.webrtc_ice_config as m; print(pathlib.Path(m.__file__))')"
           sudo sed -i \
             's#https://rtc.live.cloudflare.com/v1/turn/keys/{turn_token_id}/credentials/generate"#https://rtc.live.cloudflare.com/v1/turn/keys/{turn_token_id}/credentials/generate-ice-servers"#' \
             "$SELKIES_ICE_CONFIG"
