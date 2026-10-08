@@ -18,128 +18,78 @@ permissions:
 
 jobs:
   desktop:
-    name: Linux XFCE4 Desktop
+    name: Lightweight XFCE4 Desktop
     runs-on: ubuntu-latest
     timeout-minutes: 365
-    env:
-      BROWSER_PASSWORD: ${{ secrets.BROWSER_PASSWORD }}
 
     steps:
-      - name: Start XFCE4 + Chrome
+      - name: Start Linux Desktop
         run: |
           set -Eeuo pipefail
-
-          [[ -n "${BROWSER_PASSWORD}" ]] || {
-            echo "::error::BROWSER_PASSWORD secret is required."
-            exit 1
-          }
-
-          docker pull kasmweb/chrome:1.19.0
-
+          docker pull theholm/xfce4-desktop-over-http:latest
           docker rm -f ngrok-cloud >/dev/null 2>&1 || true
-
           docker run -d \
             --name ngrok-cloud \
             --shm-size=512m \
-            -p 6901:6901 \
-            -e VNC_PW="${BROWSER_PASSWORD}" \
-            -e VNC_RESOLUTION=1280x720 \
-            -e MAX_FRAME_RATE=20 \
-            -e VNCOPTIONS="-PreferBandwidth -DynamicQualityMin=2 -DynamicQualityMax=6 -DLP_ClipDelay=0" \
-            -e START_PULSEAUDIO=0 \
-            -e KASM_SVC_AUDIO=0 \
-            -e KASM_SVC_AUDIO_INPUT=0 \
-            -e KASM_SVC_GAMEPAD=0 \
-            -e KASM_SVC_WEBCAM=0 \
-            -e KASM_SVC_PRINTER=0 \
-            -e KASM_SVC_SMARTCARD=0 \
-            kasmweb/chrome:1.19.0
+            -p 6080:6080 \
+            -e XRES=1366x768x24 \
+            -e TZ=Asia/Dubai \
+            theholm/xfce4-desktop-over-http:latest
 
-          echo "Waiting for KasmVNC..."
-
+          echo "Waiting for XFCE4 desktop..."
           for attempt in {1..60}; do
-            status="$(curl -ksS --max-time 5 \
-              -u "kasm_user:${BROWSER_PASSWORD}" \
-              -o /dev/null \
-              -w "%{http_code}" \
-              https://127.0.0.1:6901/ 2>/dev/null || true)"
-
-            if [[ "${status}" == "200" ]]; then
-              echo "KasmVNC is ready."
+            status="$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/ 2>/dev/null || true)"
+            if [[ "$status" == "200" ]]; then
+              echo "XFCE4 desktop is ready."
               exit 0
             fi
-
             if ! docker inspect -f '{{.State.Running}}' ngrok-cloud 2>/dev/null | grep -q true; then
               echo "::error::Desktop container stopped."
               docker logs ngrok-cloud || true
               exit 1
             fi
-
             sleep 2
           done
 
-          echo "::error::KasmVNC did not become ready."
+          echo "::error::XFCE4 desktop did not become ready."
           docker logs ngrok-cloud --tail 200 || true
           exit 1
 
       - name: Start Cloudflare Quick Tunnel
         run: |
           set -Eeuo pipefail
-
-          curl -fsSL --retry 5 --retry-all-errors \
-            -o /tmp/cloudflared.deb \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-
+          curl -fsSL --retry 5 --retry-all-errors -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i /tmp/cloudflared.deb
 
-          cloudflared tunnel --no-autoupdate \
-            --no-tls-verify \
-            --url https://127.0.0.1:6901 \
-            > /tmp/cloudflared.log 2>&1 &
-
+          cloudflared tunnel --no-autoupdate --url http://127.0.0.1:6080 > /tmp/cloudflared.log 2>&1 &
           echo $! > /tmp/cloudflared.pid
 
           PUBLIC_URL=""
-
           for attempt in {1..60}; do
             PUBLIC_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/cloudflared.log | tail -n 1 || true)"
-
-            if [[ -n "${PUBLIC_URL}" ]]; then
-              break
-            fi
-
+            if [[ -n "$PUBLIC_URL" ]]; then break; fi
             if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then
               echo "::error::Cloudflare Tunnel stopped."
               cat /tmp/cloudflared.log || true
               exit 1
             fi
-
             sleep 2
           done
 
-          [[ -n "${PUBLIC_URL}" ]] || {
+          [[ -n "$PUBLIC_URL" ]] || {
             echo "::error::Cloudflare public URL was not created."
             cat /tmp/cloudflared.log || true
             exit 1
           }
 
-          echo "Verifying public URL..."
-
           for attempt in {1..30}; do
-            status="$(curl -ksS --max-time 10 \
-              -o /dev/null \
-              -w "%{http_code}" \
-              "${PUBLIC_URL}/" 2>/dev/null || true)"
-
-            if [[ "${status}" == "200" || "${status}" == "401" ]]; then
-              break
-            fi
-
+            status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "$PUBLIC_URL/" 2>/dev/null || true)"
+            if [[ "$status" == "200" ]]; then break; fi
             sleep 2
           done
 
-          if [[ "${status}" != "200" && "${status}" != "401" ]]; then
-            echo "::error::Public URL did not respond."
+          if [[ "$status" != "200" ]]; then
+            echo "::error::Public desktop did not respond."
             cat /tmp/cloudflared.log || true
             exit 1
           fi
@@ -148,16 +98,16 @@ jobs:
             echo "========================================"
             echo "NGROK CLOUD IS READY"
             echo "========================================"
-            echo "Linux       : Ubuntu"
+            echo "Linux       : Debian"
             echo "Desktop     : XFCE4"
-            echo "Browser     : Google Chrome"
-            echo "Resolution  : 1280x720"
+            echo "Browser     : Chromium installed"
+            echo "Resolution  : 1366x768"
+            echo "Display     : noVNC"
             echo "Status      : ONLINE"
             echo
-            echo "Public URL  : ${PUBLIC_URL}"
+            echo "Public URL  : $PUBLIC_URL"
             echo
-            echo "Username    : kasm_user"
-            echo "Password    : GitHub Secret"
+            echo "Open the URL to use the full Linux desktop."
             echo "========================================"
           } | tee /tmp/connection.txt
 
