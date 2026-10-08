@@ -1,0 +1,383 @@
+name: ☁️ Cloud Desktop
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Architecture:
+#   Xvfb (virtual display 1920×1080)
+#     └─ Openbox WM + tint2 taskbar + xterm
+#         └─ x11vnc (VNC server, port 5900)
+#             └─ noVNC + websockify (HTTP, port 6080)
+#                 └─ Cloudflare Quick Tunnel (public HTTPS URL)
+#
+# Zero secrets needed. No WebRTC. No TURN server. Pure HTTP tunnel.
+# Startup: ~60 seconds.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "How long to keep the session alive"
+        required: true
+        type: choice
+        options: ["1h", "3h", "6h"]
+        default: "3h"
+      resolution:
+        description: "Screen resolution"
+        required: false
+        type: choice
+        options: ["1280x720", "1600x900", "1920x1080"]
+        default: "1600x900"
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Openbox Desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 370
+
+    steps:
+
+      # ────────────────────────────────────────
+      # 1. INSTALL PACKAGES
+      # ────────────────────────────────────────
+      - name: Install desktop & tools
+        run: |
+          set -Eeuo pipefail
+
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            xvfb \
+            x11vnc \
+            openbox \
+            tint2 \
+            pcmanfm \
+            xterm \
+            feh \
+            python3-websockify \
+            python3 python3-pip python3-venv \
+            nodejs npm \
+            git curl wget ca-certificates jq openssl \
+            build-essential unzip
+
+          # cloudflared
+          curl -fsSL \
+            -o /usr/local/bin/cloudflared \
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+          chmod +x /usr/local/bin/cloudflared
+
+          # noVNC (web VNC client)
+          git clone --depth 1 --branch v1.5.0 \
+            https://github.com/novnc/noVNC.git \
+            "$HOME/noVNC"
+
+          echo "All packages installed."
+
+      # ────────────────────────────────────────
+      # 2. CONFIGURE OPENBOX DESKTOP
+      # ────────────────────────────────────────
+      - name: Configure desktop environment
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$HOME/.config/openbox"
+
+          # ── Openbox autostart ──────────────────
+          cat > "$HOME/.config/openbox/autostart" << 'EOF'
+          # Taskbar
+          tint2 &
+
+          # Set background color (dark blue-grey, no image needed)
+          xsetroot -solid "#1e2433"
+
+          # File manager daemon
+          pcmanfm --daemon-mode &
+
+          # Open a terminal on start
+          xterm -fa 'Monospace' -fs 11 -bg '#1e2433' -fg '#e0e6f0' \
+            -title 'Terminal' -geometry 120x35+40+80 &
+          EOF
+
+          # ── Openbox right-click menu ───────────
+          cat > "$HOME/.config/openbox/menu.xml" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <openbox_menu xmlns="http://openbox.org/"
+                        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                        xsi:schemaLocation="http://openbox.org/ file:///usr/share/openbox/menu.xsd">
+            <menu id="root-menu" label="Desktop">
+              <item label="Terminal">
+                <action name="Execute">
+                  <command>xterm -fa 'Monospace' -fs 11 -bg '#1e2433' -fg '#e0e6f0'</command>
+                </action>
+              </item>
+              <item label="File Manager">
+                <action name="Execute"><command>pcmanfm</command></action>
+              </item>
+              <separator />
+              <item label="Install Chromium">
+                <action name="Execute">
+                  <command>xterm -e "sudo snap install chromium; bash"</command>
+                </action>
+              </item>
+              <separator />
+              <item label="Refresh Desktop">
+                <action name="Execute"><command>openbox --reconfigure</command></action>
+              </item>
+            </menu>
+          </openbox_menu>
+          EOF
+
+          # ── Workspace folder ───────────────────
+          mkdir -p "$HOME/workspace"
+          cat > "$HOME/workspace/README.txt" << 'EOF'
+          ═══════════════════════════════════════
+           CLOUD DEV ENVIRONMENT — READY
+          ═══════════════════════════════════════
+
+          الـ tools الجاهزة:
+            python3, pip, venv
+            node, npm
+            git, curl, wget
+            build-essential, unzip
+
+          عايز تثبت حاجة تانية؟
+            sudo apt install PACKAGE
+            pip install PACKAGE
+            npm install -g PACKAGE
+
+          عايز browser؟
+            sudo snap install chromium
+
+          ملفاتك في:
+            ~/workspace
+          ═══════════════════════════════════════
+          EOF
+
+          echo "Desktop configured."
+
+      # ────────────────────────────────────────
+      # 3. START VIRTUAL DISPLAY
+      # ────────────────────────────────────────
+      - name: Start Xvfb
+        run: |
+          set -Eeuo pipefail
+
+          RESOLUTION="${{ inputs.resolution || '1600x900' }}"
+
+          Xvfb :99 -screen 0 "${RESOLUTION}x24" -ac +extension GLX +render -noreset &
+          echo $! > "$HOME/xvfb.pid"
+
+          sleep 2
+
+          # Verify display is up
+          DISPLAY=:99 xdpyinfo > /dev/null 2>&1 || {
+            echo "::error::Xvfb failed to start"
+            exit 1
+          }
+
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "Xvfb running at :99 (${RESOLUTION})"
+
+      # ────────────────────────────────────────
+      # 4. START OPENBOX SESSION
+      # ────────────────────────────────────────
+      - name: Start Openbox
+        env:
+          DISPLAY: ":99"
+        run: |
+          set -Eeuo pipefail
+
+          nohup openbox-session > "$HOME/openbox.log" 2>&1 &
+          echo $! > "$HOME/openbox.pid"
+
+          sleep 3
+          echo "Openbox started."
+
+      # ────────────────────────────────────────
+      # 5. START VNC SERVER
+      # ────────────────────────────────────────
+      - name: Start x11vnc
+        env:
+          DISPLAY: ":99"
+        run: |
+          set -Eeuo pipefail
+
+          VNC_PASS="$(openssl rand -hex 6)"
+
+          nohup x11vnc \
+            -display :99 \
+            -passwd "${VNC_PASS}" \
+            -rfbport 5900 \
+            -forever \
+            -shared \
+            -noxdamage \
+            -noxrecord \
+            -noxfixes \
+            -quiet \
+            > "$HOME/x11vnc.log" 2>&1 &
+
+          echo $! > "$HOME/x11vnc.pid"
+
+          # Wait for VNC to be ready
+          for i in {1..20}; do
+            if nc -z 127.0.0.1 5900 2>/dev/null; then
+              echo "x11vnc ready on port 5900"
+              break
+            fi
+            sleep 1
+          done
+
+          echo "VNC_PASS=${VNC_PASS}" >> "$GITHUB_ENV"
+
+      # ────────────────────────────────────────
+      # 6. START noVNC
+      # ────────────────────────────────────────
+      - name: Start noVNC
+        run: |
+          set -Eeuo pipefail
+
+          nohup websockify \
+            --web "$HOME/noVNC" \
+            6080 \
+            127.0.0.1:5900 \
+            > "$HOME/novnc.log" 2>&1 &
+
+          echo $! > "$HOME/novnc.pid"
+
+          # Wait for noVNC HTTP to be ready
+          for i in {1..20}; do
+            if curl -fsS -o /dev/null http://127.0.0.1:6080/vnc.html 2>/dev/null; then
+              echo "noVNC ready on port 6080"
+              break
+            fi
+            sleep 1
+          done
+
+      # ────────────────────────────────────────
+      # 7. CLOUDFLARE TUNNEL
+      # ────────────────────────────────────────
+      - name: Open Cloudflare tunnel
+        run: |
+          set -Eeuo pipefail
+
+          nohup cloudflared tunnel \
+            --no-autoupdate \
+            --url http://127.0.0.1:6080 \
+            > "$HOME/cloudflared.log" 2>&1 &
+
+          echo $! > "$HOME/cloudflared.pid"
+
+          PUBLIC_URL=""
+          for i in {1..60}; do
+            CLEAN="$(sed -E $'s/\\x1B\\[[0-9;?]*[ -/]*[@-~]//g' \
+              "$HOME/cloudflared.log" 2>/dev/null || true)"
+            PUBLIC_URL="$(echo "$CLEAN" \
+              | grep -aoE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' \
+              | tail -1 || true)"
+            [[ -n "$PUBLIC_URL" ]] && break
+            sleep 2
+          done
+
+          [[ -n "$PUBLIC_URL" ]] || {
+            echo "::error::Cloudflare tunnel URL not found."
+            cat "$HOME/cloudflared.log"
+            exit 1
+          }
+
+          # Verify tunnel is reachable
+          for i in {1..15}; do
+            STATUS="$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 10 "$PUBLIC_URL/vnc.html" || true)"
+            [[ "$STATUS" == "200" ]] && break
+            sleep 3
+          done
+
+          # ── Direct autoconnect URL ─────────────
+          CONNECT_URL="${PUBLIC_URL}/vnc.html?autoconnect=true&resize=scale&password=${VNC_PASS}"
+
+          # ── Console output ─────────────────────
+          echo ""
+          echo "╔══════════════════════════════════════════════════╗"
+          echo "║            CLOUD DESKTOP IS READY                ║"
+          echo "╠══════════════════════════════════════════════════╣"
+          echo "║  Desktop   : Openbox + tint2                     ║"
+          echo "║  Display   : ${{ inputs.resolution || '1600x900' }}                      ║"
+          echo "║  Transport : noVNC over HTTP (no WebRTC)         ║"
+          echo "╠══════════════════════════════════════════════════╣"
+          echo "║  Direct URL (autoconnect):                       ║"
+          echo "║  $CONNECT_URL"
+          echo "║                                                  ║"
+          echo "║  Or open:  $PUBLIC_URL/vnc.html"
+          echo "║  Password: $VNC_PASS                             ║"
+          echo "╚══════════════════════════════════════════════════╝"
+          echo ""
+
+          # ── GitHub Step Summary ────────────────
+          {
+            echo "## ☁️ Cloud Desktop — Ready"
+            echo ""
+            echo "### 🖥️ Connect"
+            echo ""
+            echo "**Direct link (click to open — no password needed):**"
+            echo ""
+            echo "\`\`\`"
+            echo "$CONNECT_URL"
+            echo "\`\`\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Desktop** | Openbox + tint2 taskbar |"
+            echo "| **Resolution** | ${{ inputs.resolution || '1600x900' }} |"
+            echo "| **Transport** | noVNC over HTTP |"
+            echo "| **VNC Password** | \`${VNC_PASS}\` |"
+            echo "| **Tools** | Python 3 · Node.js · Git · build-essential |"
+            echo "| **Duration** | ${{ inputs.duration || '3h' }} |"
+            echo ""
+            echo "> Right-click the desktop to open Terminal or File Manager."
+            echo "> Install anything with: \`sudo apt install PACKAGE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "CONNECT_URL=${CONNECT_URL}" >> "$GITHUB_ENV"
+
+      # ────────────────────────────────────────
+      # 8. KEEP ALIVE
+      # ────────────────────────────────────────
+      - name: Keep session alive (${{ inputs.duration || '3h' }})
+        run: |
+          case "${{ inputs.duration || '3h' }}" in
+            1h) sleep 3600  ;;
+            3h) sleep 10800 ;;
+            6h) sleep 21600 ;;
+            *)  sleep 10800 ;;
+          esac
+
+      # ────────────────────────────────────────
+      # 9. DIAGNOSTICS (on failure only)
+      # ────────────────────────────────────────
+      - name: Diagnostics
+        if: failure()
+        run: |
+          echo "=== Xvfb ===" && cat "$HOME/xvfb.pid" 2>/dev/null || true
+          echo "=== Openbox ===" && cat "$HOME/openbox.log" 2>/dev/null || true
+          echo "=== x11vnc ===" && cat "$HOME/x11vnc.log" 2>/dev/null || true
+          echo "=== noVNC ===" && cat "$HOME/novnc.log" 2>/dev/null || true
+          echo "=== cloudflared ===" && cat "$HOME/cloudflared.log" 2>/dev/null || true
+          echo "=== Processes ===" && ps aux | grep -E 'Xvfb|openbox|x11vnc|websockify|cloudflared' | grep -v grep || true
+
+      # ────────────────────────────────────────
+      # 10. CLEANUP
+      # ────────────────────────────────────────
+      - name: Cleanup
+        if: always()
+        run: |
+          for pid_file in cloudflared novnc x11vnc openbox xvfb; do
+            if [[ -f "$HOME/${pid_file}.pid" ]]; then
+              kill "$(cat "$HOME/${pid_file}.pid")" 2>/dev/null || true
+            fi
+          done
+          pkill -f 'websockify'    2>/dev/null || true
+          pkill -f 'cloudflared'   2>/dev/null || true
+          pkill -f 'x11vnc'        2>/dev/null || true
+          pkill -f 'openbox'       2>/dev/null || true
+          pkill -f 'Xvfb'          2>/dev/null || true
