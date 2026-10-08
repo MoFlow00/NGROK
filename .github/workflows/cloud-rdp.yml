@@ -26,9 +26,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends xfce4 xfce4-terminal xrdp xorgxrdp dbus-x11 curl ca-certificates openssl
           sudo useradd -m -s /bin/bash clouduser || true
-          RDP_PASSWORD="\$(openssl rand -hex 10)"
-          echo "clouduser:\$RDP_PASSWORD" | sudo chpasswd
+          
+          # توليد كلمة المرور وتعيينها
+          RDP_PASSWORD="$(openssl rand -hex 10)"
+          echo "clouduser:$RDP_PASSWORD" | sudo chpasswd
           sudo usermod -aG ssl-cert clouduser
+
           sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
           #!/bin/sh
           export XDG_CURRENT_DESKTOP=XFCE
@@ -38,10 +41,13 @@ jobs:
           exec dbus-run-session -- startxfce4
           EOF
           sudo chmod +x /etc/xrdp/startwm.sh
+
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
           systemctl is-active --quiet xrdp
-          echo "RDP_PASSWORD=\$RDP_PASSWORD" >> "\$GITHUB_ENV"
+
+          # تصدير القيمة الحقيقية للخطوات التالية
+          echo "RDP_PASSWORD=$RDP_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Start Bore TCP tunnel
         run: |
@@ -105,7 +111,7 @@ jobs:
           echo "PUBLIC_ENDPOINT=$PUBLIC_ENDPOINT" >> "$GITHUB_ENV"
 
           {
-            echo "### NGROK CLOUD RDP"
+            echo "### BORE CLOUD RDP"
             echo
             echo "RDP Host     : $PUBLIC_ENDPOINT"
             echo "Username     : clouduser"
@@ -115,7 +121,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "========================================"
-          echo "NGROK CLOUD RDP IS READY"
+          echo "BORE CLOUD RDP IS READY"
           echo "RDP Host     : $PUBLIC_ENDPOINT"
           echo "Username     : clouduser"
           echo "Password     : $RDP_PASSWORD"
@@ -129,11 +135,11 @@ jobs:
             exit 1
           }
           ps aux | grep -E 'xrdp|Xorg' | grep -v grep || true
-          echo "Bore endpoint: \$PUBLIC_ENDPOINT"
+          echo "Bore endpoint: $PUBLIC_ENDPOINT"
 
       - name: Keep session alive
         run: |
-          case "\${{ inputs.duration || '6h' }}" in
+          case "${{ inputs.duration || '6h' }}" in
             1h) sleep 3600 ;;
             3h) sleep 10800 ;;
             6h) sleep 21600 ;;
@@ -145,7 +151,7 @@ jobs:
         run: |
           ps aux | grep -E "xfce|xrdp|Xorg|bore" | grep -v grep || true
           sudo journalctl -u xrdp --no-pager -n 100 2>/dev/null || true
-          cat "\$HOME/bore-rdp.log" 2>/dev/null || true
+          cat "$HOME/bore-rdp.log" 2>/dev/null || true
 
       - name: Cleanup
         if: always()
