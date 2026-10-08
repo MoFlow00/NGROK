@@ -45,40 +45,72 @@ jobs:
           chmod +x "$HOME/cloudflared"
           echo "RDP_PASSWORD=$RDP_PASSWORD" >> "$GITHUB_ENV"
 
-      - name: Start Cloudflare RDP tunnel
+      - name: Create temporary Cloudflare RDP tunnel
         env:
-          RDP_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_RDP_TUNNEL_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           RDP_HOSTNAME: ${{ vars.CLOUDFLARE_RDP_HOSTNAME }}
+          CF_ZONE_ID: ${{ vars.CLOUDFLARE_RDP_ZONE_ID }}
         run: |
           set -Eeuo pipefail
-          if [[ -z "$RDP_TUNNEL_TOKEN" || -z "$RDP_HOSTNAME" ]]; then
-            echo "::error::Set CLOUDFLARE_RDP_TUNNEL_TOKEN secret and CLOUDFLARE_RDP_HOSTNAME variable first."
-            echo "::error::Cloudflare route must target rdp://localhost:3389."
+          if [[ -z "$CF_ACCOUNT_ID" || -z "$CF_API_TOKEN" ]]; then
+            echo "::error::Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN."
             exit 1
           fi
-          "$HOME/cloudflared" tunnel --no-autoupdate run --token "$RDP_TUNNEL_TOKEN" > "$HOME/cloudflared-rdp.log" 2>&1 &
+          if [[ -z "$RDP_HOSTNAME" || -z "$CF_ZONE_ID" ]]; then
+            echo "::error::Set CLOUDFLARE_RDP_HOSTNAME and CLOUDFLARE_RDP_ZONE_ID repository variables."
+            exit 1
+          fi
+
+          CREATE="$(curl -fsS --retry 5 --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/cfd_tunnel" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" -d '{"name":"NGROK ephemeral RDP","config_src":"cloudflare"}')"
+          if [[ "$(jq -r '.success' <<<"$CREATE")" != "true" ]]; then
+            echo "::error::Cloudflare Tunnel creation failed."
+            jq -c '.errors' <<<"$CREATE" || true
+            exit 1
+          fi
+          TUNNEL_ID="$(jq -r '.result.id' <<<"$CREATE")"
+
+          TOKEN_RESPONSE="$(curl -fsS --retry 5 --retry-all-errors "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/token" -H "Authorization: Bearer $CF_API_TOKEN")"
+          TUNNEL_TOKEN="$(jq -r '.result' <<<"$TOKEN_RESPONSE")"
+
+          CONFIG="$(jq -nc --arg host "$RDP_HOSTNAME" '{"config":{"ingress":[{"hostname":$host,"service":"tcp://127.0.0.1:3389","originRequest":{}},{"service":"http_status:404"}]}}')"
+          CONFIG_RESPONSE="$(curl -fsS --retry 5 --retry-all-errors -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/configurations" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" -d "$CONFIG")"
+          if [[ "$(jq -r '.success' <<<"$CONFIG_RESPONSE")" != "true" ]]; then
+            echo "::error::Cloudflare Tunnel configuration failed."
+            jq -c '.errors' <<<"$CONFIG_RESPONSE" || true
+            exit 1
+          fi
+
+          DNS_RESPONSE="$(curl -fsS --retry 5 --retry-all-errors -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" -d "$(jq -nc --arg name "$RDP_HOSTNAME" --arg content "$TUNNEL_ID.cfargotunnel.com" '{"type":"CNAME","name":$name,"content":$content,"ttl":1,"proxied":true}')")"
+          if [[ "$(jq -r '.success' <<<"$DNS_RESPONSE")" != "true" ]]; then
+            echo "::error::Cloudflare DNS record creation failed."
+            jq -c '.errors' <<<"$DNS_RESPONSE" || true
+            exit 1
+          fi
+          DNS_RECORD_ID="$(jq -r '.result.id' <<<"$DNS_RESPONSE")"
+          echo "CF_ACCOUNT_ID=$CF_ACCOUNT_ID" >> "$GITHUB_ENV"
+          echo "CF_API_TOKEN=$CF_API_TOKEN" >> "$GITHUB_ENV"
+          echo "RDP_TUNNEL_ID=$TUNNEL_ID" >> "$GITHUB_ENV"
+          echo "RDP_DNS_RECORD_ID=$DNS_RECORD_ID" >> "$GITHUB_ENV"
+          echo "RDP_ZONE_ID=$CF_ZONE_ID" >> "$GITHUB_ENV"
+
+          nohup "$HOME/cloudflared" tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > "$HOME/cloudflared-rdp.log" 2>&1 &
           echo $! > "$HOME/cloudflared-rdp.pid"
-          for attempt in {1..30}; do
+          for attempt in {1..45}; do
             if grep -Eqi "registered tunnel connection|connection.*registered" "$HOME/cloudflared-rdp.log" 2>/dev/null; then break; fi
             if ! kill -0 "$(cat "$HOME/cloudflared-rdp.pid")" 2>/dev/null; then cat "$HOME/cloudflared-rdp.log" || true; exit 1; fi
             sleep 2
           done
-          {
-            echo "========================================"
-            echo "NGROK CLOUD RDP IS READY"
-            echo "========================================"
-            echo "Transport : RDP"
-            echo "Host      : $RDP_HOSTNAME"
-            echo "Username  : clouduser"
-            echo "Password  : $RDP_PASSWORD"
-            echo
-            echo "On your device run:"
-            echo "cloudflared access tcp --hostname $RDP_HOSTNAME --url localhost:13389"
-            echo "Then connect your RDP client to localhost:13389"
-            echo "========================================"
-          } | tee /tmp/connection.txt
-          { echo "### NGROK CLOUD RDP"; cat /tmp/connection.txt; } >> "$GITHUB_STEP_SUMMARY"
+          grep -Eqi "registered tunnel connection|connection.*registered" "$HOME/cloudflared-rdp.log"
 
+          echo "========================================" | tee /tmp/connection.txt
+          echo "NGROK CLOUD RDP IS READY" | tee -a /tmp/connection.txt
+          echo "Host      : $RDP_HOSTNAME" | tee -a /tmp/connection.txt
+          echo "Username  : clouduser" | tee -a /tmp/connection.txt
+          echo "Password  : $RDP_PASSWORD" | tee -a /tmp/connection.txt
+          echo "Run: cloudflared access tcp --hostname $RDP_HOSTNAME --url localhost:13389" | tee -a /tmp/connection.txt
+          echo "Then connect RDP to localhost:13389" | tee -a /tmp/connection.txt
+          { echo "### NGROK CLOUD RDP"; cat /tmp/connection.txt; } >> "$GITHUB_STEP_SUMMARY"
       - name: Keep session alive
         run: |
           case "${{ inputs.duration || '6h' }}" in
