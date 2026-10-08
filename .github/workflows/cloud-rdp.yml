@@ -1,8 +1,6 @@
 name: NGROK Cloud RDP
 
 on:
-  push:
-    branches: [rdp-experimental]
   workflow_dispatch:
     inputs:
       duration:
