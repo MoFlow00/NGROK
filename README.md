@@ -11,13 +11,13 @@ Ubuntu GitHub Runner
 -> Browser
 -> Cloudflare Quick Tunnel
 
-Selkies is designed as a low-latency HTML5 remote desktop and supports hardware or software video encoding. This workflow uses its H.264 software encoder because GitHub-hosted runners do not provide a dedicated GPU for this session. citeturn0search0turn1search2
+Selkies is designed as a low-latency HTML5 remote desktop and supports hardware or software video encoding. This workflow uses its H.264 software encoder because GitHub-hosted runners do not provide a dedicated GPU for this session.
 
 ## Why Selkies
 
 The previous QuickDesk setup used Xvfb + x11vnc + noVNC. That sends the desktop through a traditional VNC framebuffer path.
 
-Selkies encodes the desktop as video and renders it in the browser using its HTML5 client. Its virtual-display resize mode also lets the desktop follow the browser window instead of staying locked to one fixed resolution. citeturn3search0
+Selkies encodes the desktop as video and renders it in the browser using its HTML5 client. Its virtual-display resize mode also lets the desktop follow the browser window instead of staying locked to one fixed resolution.
 
 ## Runtime
 
