@@ -13,6 +13,9 @@ name: ☁️ Cloud Desktop
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
+  push:
+    branches:
+      - v2-rebuild
   workflow_dispatch:
     inputs:
       duration:
