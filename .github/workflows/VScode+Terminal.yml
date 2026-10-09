@@ -1,0 +1,209 @@
+name: ☁️ Cloud Dev Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Session duration"
+        required: true
+        type: choice
+        options:
+          - "1h"
+          - "3h"
+          - "6h"
+        default: "3h"
+
+permissions:
+  contents: read
+
+jobs:
+  dev:
+    name: VS Code + Terminal
+    runs-on: ubuntu-latest
+    timeout-minutes: 370
+
+    steps:
+      # ──────────────────────────────────────────
+      # 1. TOOLS & RUNTIME
+      # ──────────────────────────────────────────
+      - name: Install core tools
+        run: |
+          set -Eeuo pipefail
+
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            curl ca-certificates git jq openssl \
+            python3 python3-pip python3-venv \
+            nodejs npm \
+            build-essential
+
+          # code-server (VS Code in browser)
+          curl -fsSL https://code-server.dev/install.sh | sh -s -- --method standalone --prefix "$HOME/.local"
+
+          # cloudflared tunnel binary
+          curl -fsSL \
+            -o "$HOME/.local/bin/cloudflared" \
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+          chmod +x "$HOME/.local/bin/cloudflared"
+
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # ──────────────────────────────────────────
+      # 2. CONFIGURE VS CODE SERVER
+      # ──────────────────────────────────────────
+      - name: Configure code-server
+        run: |
+          set -Eeuo pipefail
+
+          PASSWORD="$(openssl rand -hex 10)"
+
+          mkdir -p "$HOME/.config/code-server"
+          cat > "$HOME/.config/code-server/config.yaml" <<EOF
+          bind-addr: 127.0.0.1:8080
+          auth: password
+          password: "${PASSWORD}"
+          cert: false
+          EOF
+
+          # Workspace folder
+          mkdir -p "$HOME/workspace"
+
+          # Welcome file
+          cat > "$HOME/workspace/README.md" <<'MDEOF'
+          # Cloud Dev Environment
+
+          اهلاً! البيئة شغالة وجاهزة.
+
+          ## المتوفر
+          - Python 3 + pip + venv
+          - Node.js + npm
+          - Git
+          - Terminal كامل
+
+          ## ابدأ هنا
+          افتح terminal من: Terminal → New Terminal
+
+          MDEOF
+
+          echo "CS_PASSWORD=${PASSWORD}" >> "$GITHUB_ENV"
+
+      # ──────────────────────────────────────────
+      # 3. START CODE-SERVER
+      # ──────────────────────────────────────────
+      - name: Start code-server
+        run: |
+          set -Eeuo pipefail
+
+          nohup "$HOME/.local/bin/code-server" \
+            --config "$HOME/.config/code-server/config.yaml" \
+            "$HOME/workspace" \
+            > "$HOME/code-server.log" 2>&1 &
+
+          echo $! > "$HOME/code-server.pid"
+
+          # Wait for ready
+          for i in {1..30}; do
+            if curl -fsS -o /dev/null http://127.0.0.1:8080; then
+              echo "code-server is up"
+              break
+            fi
+            sleep 2
+          done
+
+      # ──────────────────────────────────────────
+      # 4. CLOUDFLARE TUNNEL
+      # ──────────────────────────────────────────
+      - name: Open Cloudflare tunnel
+        run: |
+          set -Eeuo pipefail
+
+          nohup cloudflared tunnel \
+            --no-autoupdate \
+            --url http://127.0.0.1:8080 \
+            > "$HOME/cloudflared.log" 2>&1 &
+
+          echo $! > "$HOME/cloudflared.pid"
+
+          PUBLIC_URL=""
+          for i in {1..60}; do
+            CLEAN="$(sed -E $'s/\\x1B\\[[0-9;?]*[ -/]*[@-~]//g' "$HOME/cloudflared.log" 2>/dev/null || true)"
+            PUBLIC_URL="$(echo "$CLEAN" | grep -aoE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -1 || true)"
+            [[ -n "$PUBLIC_URL" ]] && break
+            sleep 2
+          done
+
+          [[ -n "$PUBLIC_URL" ]] || {
+            echo "::error::Cloudflare tunnel URL not found"
+            cat "$HOME/cloudflared.log"
+            exit 1
+          }
+
+          # Verify reachable
+          STATUS="000"
+          for i in {1..20}; do
+            STATUS="$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 "$PUBLIC_URL/" || true)"
+            [[ "$STATUS" == "200" || "$STATUS" == "302" ]] && break
+            sleep 3
+          done
+
+          # Print connection info
+          {
+            echo ""
+            echo "╔══════════════════════════════════════════╗"
+            echo "║        CLOUD DEV ENVIRONMENT READY        ║"
+            echo "╠══════════════════════════════════════════╣"
+            echo "║  URL      : $PUBLIC_URL"
+            echo "║  Password : $CS_PASSWORD"
+            echo "║  Editor   : VS Code (code-server)"
+            echo "║  Runtime  : Python3 · Node.js · Git"
+            echo "╚══════════════════════════════════════════╝"
+            echo ""
+          } | tee /tmp/session-info.txt
+
+          # GitHub Step Summary
+          {
+            echo "## ☁️ Cloud Dev Environment"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **URL** | \`$PUBLIC_URL\` |"
+            echo "| **Password** | \`$CS_PASSWORD\` |"
+            echo "| **Editor** | VS Code (code-server) |"
+            echo "| **Tools** | Python 3 · Node.js · Git |"
+            echo ""
+            echo "> افتح الـ URL في المتصفح، ادخل الـ password، وابدأ."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ──────────────────────────────────────────
+      # 5. KEEP ALIVE
+      # ──────────────────────────────────────────
+      - name: Keep session alive
+        run: |
+          case "${{ inputs.duration }}" in
+            1h) sleep 3600 ;;
+            3h) sleep 10800 ;;
+            6h) sleep 21600 ;;
+            *) sleep 10800 ;;
+          esac
+
+      # ──────────────────────────────────────────
+      # 6. DIAGNOSTICS (on failure)
+      # ──────────────────────────────────────────
+      - name: Diagnostics
+        if: failure()
+        run: |
+          echo "=== code-server log ==="
+          cat "$HOME/code-server.log" 2>/dev/null || true
+          echo "=== cloudflared log ==="
+          cat "$HOME/cloudflared.log" 2>/dev/null || true
+          echo "=== processes ==="
+          ps aux | grep -E 'code-server|cloudflared' | grep -v grep || true
+
+      # ──────────────────────────────────────────
+      # 7. CLEANUP
+      # ──────────────────────────────────────────
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -f code-server 2>/dev/null || true
+          pkill -f cloudflared  2>/dev/null || true
